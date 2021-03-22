@@ -1,0 +1,21 @@
+[package]
+name = "memflow-system-proxy"
+version = "0.1.0"
+authors = ["Aurimas Blažulionis <0x60@pm.me>"]
+edition = "2018"
+description = "System call based proxy-OS for memflow"
+readme = "README.md"
+license = "LICENSE"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+memflow = { git = "https://github.com/memflow/memflow.git", branch = "next", features = ["plugins"] }
+memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
+log = "0.4"
+simple_logger = "1"
+libc = { version = "0.2.90" }
+procfs = "0.9"
+itertools = "0.10"
+
