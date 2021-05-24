@@ -18,4 +18,5 @@ simple_logger = "1"
 libc = { version = "0.2.90" }
 procfs = "0.9"
 itertools = "0.10"
+goblin = "0.4"
 

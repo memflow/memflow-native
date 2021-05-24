@@ -14,42 +14,109 @@ struct IoSendVec(iovec);
 
 unsafe impl Send for IoSendVec {}
 
-pub struct LinuxOS {
-    info: OSInfo,
-    cached_modules: Vec<KernelModule>
+pub struct LinuxOs {
+    info: OsInfo,
+    cached_modules: Vec<KernelModule>,
 }
 
-impl Clone for LinuxOS {
+impl Clone for LinuxOs {
     fn clone(&self) -> Self {
         Self {
             info: self.info.clone(),
-            cached_modules: vec![]
+            cached_modules: vec![],
         }
     }
 }
 
-impl Default for LinuxOS {
+impl Default for LinuxOs {
     fn default() -> Self {
-        let info = OSInfo {
+        let info = OsInfo {
             base: Address::NULL,
             size: 0,
             arch: ArchitectureIdent::X86(64, false),
         };
 
-        Self { info, cached_modules: vec![] }
+        Self {
+            info,
+            cached_modules: vec![],
+        }
     }
 }
 
-impl<'a> OSInner<'a> for LinuxOS {
+/// Epic hack. TODO: Remove
+pub struct Nop {}
+
+impl PhysicalMemory for Nop {
+    fn phys_read_raw_list(&mut self, _data: &mut [PhysicalReadData]) -> Result<()> {
+        Err(ErrorKind::NotSupported.into())
+    }
+
+    fn phys_write_raw_list(&mut self, _data: &[PhysicalWriteData]) -> Result<()> {
+        Err(ErrorKind::NotSupported.into())
+    }
+
+    fn set_mem_map(&mut self, _mem_map: MemoryMap<(Address, usize)>) {}
+
+    fn metadata(&self) -> PhysicalMemoryMetadata {
+        PhysicalMemoryMetadata {
+            size: 0,
+            readonly: true,
+        }
+    }
+}
+
+impl VirtualMemory for Nop {
+    fn virt_read_raw_list(&mut self, _data: &mut [VirtualReadData]) -> PartialResult<()> {
+        Err(PartialError::Error(ErrorKind::NotSupported.into()))
+    }
+
+    fn virt_write_raw_list(&mut self, _data: &[VirtualWriteData]) -> PartialResult<()> {
+        Err(PartialError::Error(ErrorKind::NotSupported.into()))
+    }
+
+    fn virt_page_info(&mut self, _addr: Address) -> Result<Page> {
+        Err(ErrorKind::NotSupported.into())
+    }
+
+    fn virt_page_map_range(
+        &mut self,
+        _gap_size: usize,
+        _start: Address,
+        _end: Address,
+    ) -> Vec<(Address, usize)> {
+        vec![]
+    }
+
+    fn virt_translation_map_range(
+        &mut self,
+        _start: Address,
+        _end: Address,
+    ) -> Vec<(Address, usize, PhysicalAddress)> {
+        vec![]
+    }
+}
+
+impl<'a> OsInner<'a> for LinuxOs {
     type ProcessType = LinuxProcess;
     type IntoProcessType = LinuxProcess;
+
+    type VirtualMemoryType = Nop;
+    type PhysicalMemoryType = Nop;
+
+    fn virt_mem(&mut self) -> Option<&mut Self::VirtualMemoryType> {
+        None
+    }
+
+    fn phys_mem(&mut self) -> Option<&mut Self::PhysicalMemoryType> {
+        None
+    }
 
     /// Walks a process list and calls a callback for each process structure address
     ///
     /// The callback is fully opaque. We need this style so that C FFI can work seamlessly.
     fn process_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         procfs::process::all_processes()
-            .map_err(|_| Error(ErrorOrigin::OSLayer, ErrorKind::UnableToReadDir))?
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
             .into_iter()
             .map(|p| p.pid() as usize)
             .map(Address::from)
@@ -62,23 +129,40 @@ impl<'a> OSInner<'a> for LinuxOS {
     /// Find process information by its internal address
     fn process_info_by_address(&mut self, address: Address) -> Result<ProcessInfo> {
         let proc = procfs::process::Process::new(address.as_u64() as pid_t)
-            .map_err(|_| Error(ErrorOrigin::OSLayer, ErrorKind::UnableToReadDir))?;
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?;
+
+        let command_line = proc
+            .cmdline()
+            .ok()
+            .map(|v| v.join(" ").split('\0').collect_vec().join(" "))
+            .unwrap_or_else(String::new)
+            .into();
+
+        let path = proc
+            .cmdline()
+            .ok()
+            .map(|l| {
+                l.get(0)
+                    .map(|s| s.split('\0').next().unwrap_or("").to_string())
+            })
+            .flatten()
+            .unwrap_or_else(|| {
+                proc.status()
+                    .ok()
+                    .map(|s| s.name)
+                    .unwrap_or("unknown".to_string())
+            });
+
+        let name = path.split(&['/', '\\'][..]).last().unwrap().into();
+
+        let path = path.into();
 
         Ok(ProcessInfo {
             address,
-            pid: proc.pid() as PID,
-            name: proc
-                .cmdline()
-                .ok()
-                .map(|l| l.get(0).map(|s| s.split_whitespace().next().unwrap().to_string()))
-                .flatten()
-                .unwrap_or_else(|| {
-                    proc.status()
-                        .ok()
-                        .map(|s| s.name)
-                        .unwrap_or("unknown".to_string())
-                })
-                .into(),
+            pid: proc.pid() as Pid,
+            command_line,
+            path,
+            name,
             sys_arch: ArchitectureIdent::X86(64, false),
             proc_arch: ArchitectureIdent::X86(64, false),
         })
@@ -105,7 +189,7 @@ impl<'a> OSInner<'a> for LinuxOS {
     /// * `callback` - where to pass each matching module to. This is an opaque callback.
     fn module_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         self.cached_modules = procfs::modules()
-            .map_err(|_| Error(ErrorOrigin::OSLayer, ErrorKind::UnableToReadDir))?
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
             .into_iter()
             .map(|(_, v)| v)
             .collect();
@@ -131,16 +215,22 @@ impl<'a> OSInner<'a> for LinuxOS {
                 address,
                 size: km.size as usize,
                 base: Address::NULL,
-                name: km.name.clone().into(),
+                name: km
+                    .name
+                    .split("/")
+                    .last()
+                    .or(Some(""))
+                    .map(ReprCString::from)
+                    .unwrap(),
                 arch: self.info.arch,
-                path: "".into(),
+                path: km.name.clone().into(),
                 parent_process: Address::INVALID,
             })
-            .ok_or(Error(ErrorOrigin::OSLayer, ErrorKind::NotFound))
+            .ok_or(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound))
     }
 
     /// Retrieves the OS info
-    fn info(&self) -> &OSInfo {
+    fn info(&self) -> &OsInfo {
         &self.info
     }
 }
@@ -159,14 +249,14 @@ impl LinuxProcess {
         Ok(Self {
             virt_mem: ProcessVirtualMemory::new(&info),
             proc: procfs::process::Process::new(info.pid as pid_t)
-                .map_err(|_| Error(ErrorOrigin::OSLayer, ErrorKind::UnableToReadDir))?,
+                .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?,
             info,
             cached_maps: vec![],
             cached_module_maps: vec![],
         })
     }
 
-    pub fn mmap_path_to_name_string(path: &MMapPath) -> ReprCStr {
+    pub fn mmap_path_to_name_string(path: &MMapPath) -> ReprCString {
         match path {
             MMapPath::Path(buf) => buf
                 .file_name()
@@ -185,12 +275,9 @@ impl LinuxProcess {
         }
     }
 
-    pub fn mmap_path_to_path_string(path: &MMapPath) -> ReprCStr {
+    pub fn mmap_path_to_path_string(path: &MMapPath) -> ReprCString {
         match path {
-            MMapPath::Path(buf) => buf
-                .to_str()
-                .unwrap_or("unknown")
-                .into(),
+            MMapPath::Path(buf) => buf.to_str().unwrap_or("unknown").into(),
             MMapPath::Heap => "[heap]".into(),
             MMapPath::Stack => "[stack]".into(),
             MMapPath::TStack(_) => "[tstack]".into(),
@@ -225,7 +312,7 @@ impl Process for LinuxProcess {
         self.cached_maps = self
             .proc
             .maps()
-            .map_err(|_| Error(ErrorOrigin::OSLayer, ErrorKind::UnableToReadDir))?;
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?;
 
         self.cached_module_maps = self
             .cached_maps
@@ -284,7 +371,7 @@ impl Process for LinuxProcess {
         architecture: ArchitectureIdent,
     ) -> Result<ModuleInfo> {
         if architecture != self.info.sys_arch {
-            return Err(Error(ErrorOrigin::OSLayer, ErrorKind::NotFound));
+            return Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound));
         }
 
         self.cached_module_maps
@@ -300,7 +387,180 @@ impl Process for LinuxProcess {
                 path: Self::mmap_path_to_path_string(&map.pathname),
                 arch: self.info.sys_arch,
             })
-            .ok_or(Error(ErrorOrigin::OSLayer, ErrorKind::NotFound))
+            .ok_or(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound))
+    }
+
+    fn module_import_list_callback(
+        &mut self,
+        info: &ModuleInfo,
+        callback: ImportCallback,
+    ) -> Result<()> {
+        let mut module_image = vec![0u8; info.size];
+        self.virt_mem
+            .virt_read_raw_into(info.base, &mut module_image)
+            .data_part()?;
+
+        use goblin::Object;
+
+        fn import_call(
+            iter: impl Iterator<Item = (usize, ReprCString)>,
+            mut callback: ImportCallback,
+        ) {
+            iter.take_while(|(offset, name)| {
+                callback.call(ImportInfo {
+                    name: name.clone(),
+                    offset: *offset,
+                })
+            })
+            .for_each(|_| {});
+        }
+
+        match Object::parse(&module_image).map_err(|_| ErrorKind::InvalidExeFile)? {
+            Object::Elf(elf) => {
+                let iter = elf
+                    .dynsyms
+                    .iter()
+                    .filter(|s| s.is_import())
+                    .filter_map(|s| {
+                        elf.dynstrtab
+                            .get(s.st_name)
+                            .map(|r| r.ok())
+                            .flatten()
+                            .map(|n| (s.st_value as usize, ReprCString::from(n)))
+                    });
+
+                import_call(iter, callback);
+
+                Ok(())
+            }
+            Object::PE(pe) => {
+                let iter = pe
+                    .imports
+                    .iter()
+                    .map(|e| (e.offset, e.name.as_ref().into()));
+
+                import_call(iter, callback);
+
+                Ok(())
+            }
+            _ => Err(ErrorKind::InvalidExeFile.into()),
+        }
+    }
+
+    fn module_export_list_callback(
+        &mut self,
+        info: &ModuleInfo,
+        callback: ExportCallback,
+    ) -> Result<()> {
+        let mut module_image = vec![0u8; info.size];
+        self.virt_mem
+            .virt_read_raw_into(info.base, &mut module_image)
+            .data_part()?;
+
+        use goblin::Object;
+
+        fn export_call(
+            iter: impl Iterator<Item = (usize, ReprCString)>,
+            mut callback: ExportCallback,
+        ) {
+            iter.take_while(|(offset, name)| {
+                callback.call(ExportInfo {
+                    name: name.clone(),
+                    offset: *offset,
+                })
+            })
+            .for_each(|_| {});
+        }
+
+        match Object::parse(&module_image).map_err(|_| ErrorKind::InvalidExeFile)? {
+            Object::Elf(elf) => {
+                let iter = elf
+                    .dynsyms
+                    .iter()
+                    .filter(|s| !s.is_import())
+                    .filter_map(|s| {
+                        elf.dynstrtab
+                            .get(s.st_name)
+                            .map(|r| r.ok())
+                            .flatten()
+                            .map(|n| (s.st_value as usize, ReprCString::from(n)))
+                    });
+
+                export_call(iter, callback);
+
+                Ok(())
+            }
+            Object::PE(pe) => {
+                let iter = pe
+                    .exports
+                    .iter()
+                    .filter_map(|e| e.name.map(|name| (e.offset, name.into())));
+
+                export_call(iter, callback);
+
+                Ok(())
+            }
+            _ => Err(ErrorKind::InvalidExeFile.into()),
+        }
+    }
+
+    fn module_section_list_callback(
+        &mut self,
+        info: &ModuleInfo,
+        callback: SectionCallback,
+    ) -> Result<()> {
+        let mut module_image = vec![0u8; info.size];
+        self.virt_mem
+            .virt_read_raw_into(info.base, &mut module_image)
+            .data_part()?;
+
+        use goblin::Object;
+
+        fn section_call(
+            iter: impl Iterator<Item = (usize, usize, ReprCString)>,
+            mut callback: SectionCallback,
+        ) {
+            iter.take_while(|(base, size, name)| {
+                callback.call(SectionInfo {
+                    name: name.clone(),
+                    base: Address::from(*base),
+                    size: *size,
+                })
+            })
+            .for_each(|_| {});
+        }
+
+        match Object::parse(&module_image).map_err(|_| ErrorKind::InvalidExeFile)? {
+            Object::Elf(elf) => {
+                let iter = elf.section_headers.iter().filter_map(|s| {
+                    elf.shdr_strtab
+                        .get(s.sh_name)
+                        .map(|r| r.ok())
+                        .flatten()
+                        .map(|n| (s.sh_addr as usize, s.sh_size as usize, ReprCString::from(n)))
+                });
+
+                section_call(iter, callback);
+
+                Ok(())
+            }
+            Object::PE(pe) => {
+                let iter = pe.sections.iter().filter_map(|e| {
+                    e.real_name.as_ref().map(|name| {
+                        (
+                            e.virtual_address as usize,
+                            e.virtual_size as usize,
+                            name.as_str().into(),
+                        )
+                    })
+                });
+
+                section_call(iter, callback);
+
+                Ok(())
+            }
+            _ => Err(ErrorKind::InvalidExeFile.into()),
+        }
     }
 
     /// Retrieves address of the primary module structure of the process
@@ -314,6 +574,22 @@ impl Process for LinuxProcess {
     /// Retrieves the process info
     fn info(&self) -> &ProcessInfo {
         &self.info
+    }
+
+    /// Retrieves the state of the process
+    fn state(&mut self) -> ProcessState {
+        ProcessState::Unknown
+        /*if let Ok(exit_status) = self.virt_mem.virt_read::<Win32ExitStatus>(
+            self.proc_info.base_info.address + self.offset_eproc_exit_status,
+        ) {
+            if exit_status == EXIT_STATUS_STILL_ACTIVE {
+                ProcessState::Alive
+            } else {
+                ProcessState::Dead(exit_status)
+            }
+        } else {
+            ProcessState::Unknown
+        }*/
     }
 }
 
@@ -342,15 +618,17 @@ impl ProcessVirtualMemory {
         }
     }
 
-    fn vm_error() -> ErrorKind {
-        match unsafe { *libc::__errno_location() } {
-            libc::EFAULT => ErrorKind::OutOfBounds,
+    fn vm_error() -> Option<ErrorKind> {
+        let ret = match unsafe { *libc::__errno_location() } {
+            libc::EFAULT => return None,
             libc::EINVAL => ErrorKind::ArgValidation,
-            libc::ENOMEM => ErrorKind::OutOfBounds,
+            libc::ENOMEM => return None,
             libc::EPERM => ErrorKind::NotSupported, // ErrorKind::Permissions
             libc::ESRCH => ErrorKind::ProcessNotFound,
             _ => ErrorKind::Unknown,
-        }
+        };
+
+        Some(ret)
     }
 }
 
@@ -381,7 +659,7 @@ impl VirtualMemory for ProcessVirtualMemory {
                 };
             }
 
-            match unsafe {
+            let libcret = unsafe {
                 libc::process_vm_readv(
                     self.pid,
                     iov_local.as_ptr().cast(),
@@ -390,12 +668,21 @@ impl VirtualMemory for ProcessVirtualMemory {
                     chunk.len() as u64,
                     0,
                 )
-            } {
-                -1 => Err(Error(ErrorOrigin::OSLayer, Self::vm_error()))?,
-                sz if sz < cnt => {
-                    ret = Err(PartialError::PartialVirtualRead(()));
+            };
+
+            let vm_err = if libcret == -1 {
+                Self::vm_error()
+            } else {
+                None
+            };
+
+            match vm_err {
+                Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
+                _ => {
+                    if libcret < cnt {
+                        ret = Err(PartialError::PartialVirtualRead(()));
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -428,7 +715,7 @@ impl VirtualMemory for ProcessVirtualMemory {
                 };
             }
 
-            match unsafe {
+            let libcret = unsafe {
                 libc::process_vm_writev(
                     self.pid,
                     iov_local.as_ptr().cast(),
@@ -437,12 +724,21 @@ impl VirtualMemory for ProcessVirtualMemory {
                     chunk.len() as u64,
                     0,
                 )
-            } {
-                -1 => Err(Error(ErrorOrigin::OSLayer, Self::vm_error()))?,
-                sz if sz < cnt => {
-                    ret = Err(PartialError::PartialVirtualRead(()));
+            };
+
+            let vm_err = if libcret == -1 {
+                Self::vm_error()
+            } else {
+                None
+            };
+
+            match vm_err {
+                Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
+                _ => {
+                    if libcret < cnt {
+                        ret = Err(PartialError::PartialVirtualRead(()));
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -450,7 +746,7 @@ impl VirtualMemory for ProcessVirtualMemory {
     }
 
     fn virt_page_info(&mut self, _addr: Address) -> Result<Page> {
-        Err(Error(ErrorOrigin::OSLayer, ErrorKind::NotSupported))
+        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported))
     }
 
     fn virt_translation_map_range(
@@ -475,27 +771,43 @@ impl VirtualMemory for ProcessVirtualMemory {
             .flatten()
             .map(|maps| maps.into_iter())
             .map(|maps| {
-                out.extend(maps.into_iter().filter(|map| {
-                    Address::from(map.address.1) > start && Address::from(map.address.0) < end
-                })
-                .map(|map| (Address::from(map.address.0), (map.address.1 - map.address.0) as usize))
-                    .map(|(s, sz)| if s < start {
-                        let diff = start - s;
-                        (start, sz - diff)
-                    } else {
-                        (s, sz)
-                    })
-                    .map(|(s, sz)| if s + sz > end {
-                        let diff = s - end;
-                        (s, sz - diff)
-                    } else {
-                        (s, sz)
-                    })
-                .coalesce(|a, b| if a.0 + a.1 + gap_size >= b.0 {
-                    Ok((a.0, b.0 - a.0 + b.1))
-                } else {
-                    Err((a, b))
-                }))
+                out.extend(
+                    maps.into_iter()
+                        .filter(|map| {
+                            Address::from(map.address.1) > start
+                                && Address::from(map.address.0) < end
+                        })
+                        .filter(|m| !m.perms.starts_with("---"))
+                        .map(|map| {
+                            (
+                                Address::from(map.address.0),
+                                (map.address.1 - map.address.0) as usize,
+                            )
+                        })
+                        .map(|(s, sz)| {
+                            if s < start {
+                                let diff = start - s;
+                                (start, sz - diff)
+                            } else {
+                                (s, sz)
+                            }
+                        })
+                        .map(|(s, sz)| {
+                            if s + sz > end {
+                                let diff = s - end;
+                                (s, sz - diff)
+                            } else {
+                                (s, sz)
+                            }
+                        })
+                        .coalesce(|a, b| {
+                            if a.0 + a.1 + gap_size >= b.0 {
+                                Ok((a.0, b.0 - a.0 + b.1))
+                            } else {
+                                Err((a, b))
+                            }
+                        }),
+                )
             });
 
         out
