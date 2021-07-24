@@ -1,3 +1,5 @@
+use memflow::mem::virt_translate::*;
+use memflow::os::process::*;
 use memflow::prelude::v1::*;
 
 use libc::{iovec, pid_t, sysconf, _SC_IOV_MAX};
@@ -43,73 +45,9 @@ impl Default for LinuxOs {
     }
 }
 
-/// Epic hack. TODO: Remove
-pub struct Nop {}
-
-impl PhysicalMemory for Nop {
-    fn phys_read_raw_list(&mut self, _data: &mut [PhysicalReadData]) -> Result<()> {
-        Err(ErrorKind::NotSupported.into())
-    }
-
-    fn phys_write_raw_list(&mut self, _data: &[PhysicalWriteData]) -> Result<()> {
-        Err(ErrorKind::NotSupported.into())
-    }
-
-    fn set_mem_map(&mut self, _mem_map: MemoryMap<(Address, usize)>) {}
-
-    fn metadata(&self) -> PhysicalMemoryMetadata {
-        PhysicalMemoryMetadata {
-            size: 0,
-            readonly: true,
-        }
-    }
-}
-
-impl VirtualMemory for Nop {
-    fn virt_read_raw_list(&mut self, _data: &mut [VirtualReadData]) -> PartialResult<()> {
-        Err(PartialError::Error(ErrorKind::NotSupported.into()))
-    }
-
-    fn virt_write_raw_list(&mut self, _data: &[VirtualWriteData]) -> PartialResult<()> {
-        Err(PartialError::Error(ErrorKind::NotSupported.into()))
-    }
-
-    fn virt_page_info(&mut self, _addr: Address) -> Result<Page> {
-        Err(ErrorKind::NotSupported.into())
-    }
-
-    fn virt_page_map_range(
-        &mut self,
-        _gap_size: usize,
-        _start: Address,
-        _end: Address,
-    ) -> Vec<(Address, usize)> {
-        vec![]
-    }
-
-    fn virt_translation_map_range(
-        &mut self,
-        _start: Address,
-        _end: Address,
-    ) -> Vec<(Address, usize, PhysicalAddress)> {
-        vec![]
-    }
-}
-
 impl<'a> OsInner<'a> for LinuxOs {
     type ProcessType = LinuxProcess;
     type IntoProcessType = LinuxProcess;
-
-    type VirtualMemoryType = Nop;
-    type PhysicalMemoryType = Nop;
-
-    fn virt_mem(&mut self) -> Option<&mut Self::VirtualMemoryType> {
-        None
-    }
-
-    fn phys_mem(&mut self) -> Option<&mut Self::PhysicalMemoryType> {
-        None
-    }
 
     /// Walks a process list and calls a callback for each process structure address
     ///
@@ -290,13 +228,10 @@ impl LinuxProcess {
     }
 }
 
+cglue_impl_group!(LinuxProcess, ProcessInstance, { VirtualTranslate });
+cglue_impl_group!(LinuxProcess, IntoProcessInstance, { VirtualTranslate });
+
 impl Process for LinuxProcess {
-    type VirtualMemoryType = ProcessVirtualMemory;
-
-    fn virt_mem(&mut self) -> &mut Self::VirtualMemoryType {
-        &mut self.virt_mem
-    }
-
     /// Walks the process' module list and calls the provided callback for each module structure
     /// address
     ///
@@ -397,7 +332,7 @@ impl Process for LinuxProcess {
     ) -> Result<()> {
         let mut module_image = vec![0u8; info.size];
         self.virt_mem
-            .virt_read_raw_into(info.base, &mut module_image)
+            .read_raw_into(info.base, &mut module_image)
             .data_part()?;
 
         use goblin::Object;
@@ -423,9 +358,7 @@ impl Process for LinuxProcess {
                     .filter(|s| s.is_import())
                     .filter_map(|s| {
                         elf.dynstrtab
-                            .get(s.st_name)
-                            .map(|r| r.ok())
-                            .flatten()
+                            .get_at(s.st_name)
                             .map(|n| (s.st_value as usize, ReprCString::from(n)))
                     });
 
@@ -454,7 +387,7 @@ impl Process for LinuxProcess {
     ) -> Result<()> {
         let mut module_image = vec![0u8; info.size];
         self.virt_mem
-            .virt_read_raw_into(info.base, &mut module_image)
+            .read_raw_into(info.base, &mut module_image)
             .data_part()?;
 
         use goblin::Object;
@@ -480,9 +413,7 @@ impl Process for LinuxProcess {
                     .filter(|s| !s.is_import())
                     .filter_map(|s| {
                         elf.dynstrtab
-                            .get(s.st_name)
-                            .map(|r| r.ok())
-                            .flatten()
+                            .get_at(s.st_name)
                             .map(|n| (s.st_value as usize, ReprCString::from(n)))
                     });
 
@@ -511,7 +442,7 @@ impl Process for LinuxProcess {
     ) -> Result<()> {
         let mut module_image = vec![0u8; info.size];
         self.virt_mem
-            .virt_read_raw_into(info.base, &mut module_image)
+            .read_raw_into(info.base, &mut module_image)
             .data_part()?;
 
         use goblin::Object;
@@ -534,9 +465,7 @@ impl Process for LinuxProcess {
             Object::Elf(elf) => {
                 let iter = elf.section_headers.iter().filter_map(|s| {
                     elf.shdr_strtab
-                        .get(s.sh_name)
-                        .map(|r| r.ok())
-                        .flatten()
+                        .get_at(s.sh_name)
                         .map(|n| (s.sh_addr as usize, s.sh_size as usize, ReprCString::from(n)))
                 });
 
@@ -579,17 +508,28 @@ impl Process for LinuxProcess {
     /// Retrieves the state of the process
     fn state(&mut self) -> ProcessState {
         ProcessState::Unknown
-        /*if let Ok(exit_status) = self.virt_mem.virt_read::<Win32ExitStatus>(
-            self.proc_info.base_info.address + self.offset_eproc_exit_status,
-        ) {
-            if exit_status == EXIT_STATUS_STILL_ACTIVE {
-                ProcessState::Alive
-            } else {
-                ProcessState::Dead(exit_status)
-            }
-        } else {
-            ProcessState::Unknown
-        }*/
+    }
+}
+
+impl MemoryView for LinuxProcess {
+    fn read_raw_iter<'a>(
+        &mut self,
+        data: CIterator<ReadData<'a>>,
+        out_fail: &mut ReadFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        self.virt_mem.read_raw_iter(data, out_fail)
+    }
+
+    fn write_raw_iter<'a>(
+        &mut self,
+        data: CIterator<WriteData<'a>>,
+        out_fail: &mut WriteFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        self.virt_mem.write_raw_iter(data, out_fail)
+    }
+
+    fn metadata(&self) -> MemoryViewMetadata {
+        self.virt_mem.metadata()
     }
 }
 
@@ -632,129 +572,166 @@ impl ProcessVirtualMemory {
     }
 }
 
-impl VirtualMemory for ProcessVirtualMemory {
-    fn virt_read_raw_list(&mut self, data: &mut [VirtualReadData]) -> PartialResult<()> {
-        let max_iov = self.temp_iov.len() / 2;
-        let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
-
-        let mut ret = Ok(());
-
-        for chunk in data.chunks_mut(max_iov) {
-            let mut cnt = 0;
-
-            for (d, (liov, riov)) in chunk
-                .iter_mut()
-                .zip(iov_local.iter_mut().zip(iov_remote.iter_mut()))
-            {
-                cnt += d.1.len() as isize;
-
-                liov.0 = iovec {
-                    iov_base: d.1.as_mut_ptr() as *mut c_void,
-                    iov_len: d.1.len(),
-                };
-
-                riov.0 = iovec {
-                    iov_base: d.0.as_usize() as *mut c_void,
-                    iov_len: d.1.len(),
-                };
-            }
-
-            let libcret = unsafe {
-                libc::process_vm_readv(
-                    self.pid,
-                    iov_local.as_ptr().cast(),
-                    chunk.len() as u64,
-                    iov_remote.as_ptr().cast(),
-                    chunk.len() as u64,
-                    0,
-                )
-            };
-
-            let vm_err = if libcret == -1 {
-                Self::vm_error()
-            } else {
-                None
-            };
-
-            match vm_err {
-                Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
-                _ => {
-                    if libcret < cnt {
-                        ret = Err(PartialError::PartialVirtualRead(()));
-                    }
-                }
-            }
-        }
-
-        ret
-    }
-
-    fn virt_write_raw_list(&mut self, data: &[VirtualWriteData]) -> PartialResult<()> {
-        let max_iov = self.temp_iov.len() / 2;
-        let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
-
-        let mut ret = Ok(());
-
-        for chunk in data.chunks(max_iov) {
-            let mut cnt = 0;
-
-            for (d, (liov, riov)) in chunk
-                .iter()
-                .zip(iov_local.iter_mut().zip(iov_remote.iter_mut()))
-            {
-                cnt += d.1.len() as isize;
-
-                liov.0 = iovec {
-                    iov_base: d.1.as_ptr() as *mut c_void,
-                    iov_len: d.1.len(),
-                };
-
-                riov.0 = iovec {
-                    iov_base: d.0.as_usize() as *mut c_void,
-                    iov_len: d.1.len(),
-                };
-            }
-
-            let libcret = unsafe {
-                libc::process_vm_writev(
-                    self.pid,
-                    iov_local.as_ptr().cast(),
-                    chunk.len() as u64,
-                    iov_remote.as_ptr().cast(),
-                    chunk.len() as u64,
-                    0,
-                )
-            };
-
-            let vm_err = if libcret == -1 {
-                Self::vm_error()
-            } else {
-                None
-            };
-
-            match vm_err {
-                Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
-                _ => {
-                    if libcret < cnt {
-                        ret = Err(PartialError::PartialVirtualRead(()));
-                    }
-                }
-            }
-        }
-
-        ret
-    }
-
-    fn virt_page_info(&mut self, _addr: Address) -> Result<Page> {
-        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported))
-    }
-
-    fn virt_translation_map_range(
+impl MemoryView for ProcessVirtualMemory {
+    fn read_raw_iter<'a>(
         &mut self,
-        _start: Address,
-        _end: Address,
-    ) -> Vec<(Address, usize, PhysicalAddress)> {
-        vec![]
+        mut data: CIterator<ReadData<'a>>,
+        _out_fail: &mut ReadFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        let max_iov = self.temp_iov.len() / 2;
+        let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
+
+        let mut iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+        let mut iov_next = iov_iter.next();
+
+        let mut elem = data.next();
+
+        while let Some(MemData(a, b)) = elem {
+            let (cnt, (liov, riov)) = iov_next.unwrap();
+
+            let iov_len = b.len();
+
+            liov.0 = iovec {
+                iov_base: b.as_ptr() as *mut c_void,
+                iov_len,
+            };
+
+            riov.0 = iovec {
+                iov_base: a.as_u64() as *mut c_void,
+                iov_len,
+            };
+
+            iov_next = iov_iter.next();
+            elem = data.next();
+
+            if elem.is_none() || iov_next.is_none() {
+                let libcret = unsafe {
+                    libc::process_vm_readv(
+                        self.pid,
+                        iov_local.as_ptr().cast(),
+                        (cnt + 1) as _,
+                        iov_remote.as_ptr().cast(),
+                        (cnt + 1) as _,
+                        0,
+                    )
+                };
+
+                let vm_err = if libcret == -1 {
+                    Self::vm_error()
+                } else {
+                    None
+                };
+
+                // TODO: WALK DOWN THE IOVECS AND INVOKE PARTIAL CALLBACKS
+                match vm_err {
+                    Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
+                    _ => {
+                        /*if libcret < cnt {
+                            ret = Err(PartialError::PartialVirtualRead(()));
+                        }*/
+                    }
+                }
+
+                iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+                iov_next = iov_iter.next();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_raw_iter<'a>(
+        &mut self,
+        mut data: CIterator<WriteData<'a>>,
+        _out_fail: &mut WriteFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        let max_iov = self.temp_iov.len() / 2;
+        let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
+
+        let mut iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+        let mut iov_next = iov_iter.next();
+
+        let mut elem = data.next();
+
+        while let Some(MemData(a, b)) = elem {
+            let (cnt, (liov, riov)) = iov_next.unwrap();
+
+            let iov_len = b.len();
+
+            liov.0 = iovec {
+                iov_base: b.as_ptr() as *mut c_void,
+                iov_len,
+            };
+
+            riov.0 = iovec {
+                iov_base: a.as_u64() as *mut c_void,
+                iov_len,
+            };
+
+            iov_next = iov_iter.next();
+            elem = data.next();
+
+            if elem.is_none() || iov_next.is_none() {
+                let libcret = unsafe {
+                    libc::process_vm_writev(
+                        self.pid,
+                        iov_local.as_ptr().cast(),
+                        (cnt + 1) as _,
+                        iov_remote.as_ptr().cast(),
+                        (cnt + 1) as _,
+                        0,
+                    )
+                };
+
+                let vm_err = if libcret == -1 {
+                    Self::vm_error()
+                } else {
+                    None
+                };
+
+                // TODO: WALK DOWN THE IOVECS AND INVOKE PARTIAL CALLBACKS
+                match vm_err {
+                    Some(err) => Err(Error(ErrorOrigin::OsLayer, err))?,
+                    _ => {
+                        /*if libcret < cnt {
+                            ret = Err(PartialError::PartialVirtualRead(()));
+                        }*/
+                    }
+                }
+
+                iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+                iov_next = iov_iter.next();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn metadata(&self) -> MemoryViewMetadata {
+        MemoryViewMetadata {
+            arch_bits: if cfg!(pointer_width = "64") { 64 } else { 32 },
+            little_endian: cfg!(target_endianess = "little"),
+            max_address: Address::invalid(),
+            readonly: false,
+            real_size: 0,
+        }
+    }
+}
+
+impl VirtualTranslate for LinuxProcess {
+    fn virt_to_phys_list(
+        &mut self,
+        addrs: &[MemoryRange],
+        _out: VirtualTranslationCallback,
+        out_fail: VirtualTranslationFailCallback,
+    ) {
+        addrs
+            .iter()
+            .map(|&MemoryRange { address, size }| VirtualTranslationFail {
+                from: address,
+                size,
+            })
+            .feed_into(out_fail);
     }
 
     fn virt_page_map_range(
@@ -762,54 +739,52 @@ impl VirtualMemory for ProcessVirtualMemory {
         gap_size: usize,
         start: Address,
         end: Address,
-    ) -> Vec<(Address, usize)> {
-        let mut out = vec![];
+        out: MemoryRangeCallback,
+    ) {
+        if let Ok(maps) = self
+            .proc
+            .maps()
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))
+        {
+            self.cached_maps = maps;
 
-        procfs::process::Process::new(self.pid)
-            .ok()
-            .map(|i| i.maps().ok())
-            .flatten()
-            .map(|maps| maps.into_iter())
-            .map(|maps| {
-                out.extend(
-                    maps.into_iter()
-                        .filter(|map| {
-                            Address::from(map.address.1) > start
-                                && Address::from(map.address.0) < end
-                        })
-                        .filter(|m| !m.perms.starts_with("---"))
-                        .map(|map| {
-                            (
-                                Address::from(map.address.0),
-                                (map.address.1 - map.address.0) as usize,
-                            )
-                        })
-                        .map(|(s, sz)| {
-                            if s < start {
-                                let diff = start - s;
-                                (start, sz - diff)
-                            } else {
-                                (s, sz)
-                            }
-                        })
-                        .map(|(s, sz)| {
-                            if s + sz > end {
-                                let diff = s - end;
-                                (s, sz - diff)
-                            } else {
-                                (s, sz)
-                            }
-                        })
-                        .coalesce(|a, b| {
-                            if a.0 + a.1 + gap_size >= b.0 {
-                                Ok((a.0, b.0 - a.0 + b.1))
-                            } else {
-                                Err((a, b))
-                            }
-                        }),
-                )
-            });
-
-        out
+            self.cached_maps
+                .iter()
+                .filter(|map| {
+                    Address::from(map.address.1) > start && Address::from(map.address.0) < end
+                })
+                .filter(|m| !m.perms.starts_with("---"))
+                .map(|map| {
+                    (
+                        Address::from(map.address.0),
+                        (map.address.1 - map.address.0) as usize,
+                    )
+                })
+                .map(|(s, sz)| {
+                    if s < start {
+                        let diff = start - s;
+                        (start, sz - diff)
+                    } else {
+                        (s, sz)
+                    }
+                })
+                .map(|(s, sz)| {
+                    if s + sz > end {
+                        let diff = s - end;
+                        (s, sz - diff)
+                    } else {
+                        (s, sz)
+                    }
+                })
+                .coalesce(|a, b| {
+                    if a.0 + a.1 + gap_size >= b.0 {
+                        Ok((a.0, b.0 - a.0 + b.1))
+                    } else {
+                        Err((a, b))
+                    }
+                })
+                .map(|(address, size)| MemoryRange { address, size })
+                .feed_into(out);
+        }
     }
 }

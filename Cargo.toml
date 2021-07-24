@@ -11,8 +11,11 @@ license = "LICENSE"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-memflow = { git = "https://github.com/memflow/memflow.git", branch = "next", features = ["plugins"] }
-memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
+#cglue = { path = "../cglue/cglue/" }
+memflow = { path = "../memflow/memflow", features = ["plugins"] }
+memflow-derive = { path = "../memflow/memflow-derive" }
+#memflow = { git = "https://github.com/memflow/memflow.git", branch = "next", features = ["plugins"] }
+#memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
 log = "0.4"
 simple_logger = "1"
 libc = { version = "0.2.90" }
