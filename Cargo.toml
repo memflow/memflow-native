@@ -12,14 +12,12 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 #cglue = { path = "../cglue/cglue/" }
-memflow = { path = "../memflow/memflow", features = ["plugins"] }
-memflow-derive = { path = "../memflow/memflow-derive" }
-#memflow = { git = "https://github.com/memflow/memflow.git", branch = "next", features = ["plugins"] }
-#memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
+memflow = { git = "https://github.com/memflow/memflow.git", branch = "next", features = ["plugins"] }
+memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
 log = "0.4"
 simple_logger = "1"
 libc = { version = "0.2.90" }
-procfs = "0.9"
+procfs = { version = "0.9", features = ["backtrace"] }
 itertools = "0.10"
 goblin = "0.4"
 

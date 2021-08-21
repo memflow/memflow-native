@@ -1,3 +1,4 @@
+use memflow::cglue;
 use memflow::mem::virt_translate::*;
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
@@ -54,7 +55,10 @@ impl<'a> OsInner<'a> for LinuxOs {
     /// The callback is fully opaque. We need this style so that C FFI can work seamlessly.
     fn process_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         procfs::process::all_processes()
-            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
+            .map_err(|e| {
+                print!("{}", e);
+                Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir)
+            })?
             .into_iter()
             .map(|p| p.pid() as usize)
             .map(Address::from)
@@ -66,7 +70,7 @@ impl<'a> OsInner<'a> for LinuxOs {
 
     /// Find process information by its internal address
     fn process_info_by_address(&mut self, address: Address) -> Result<ProcessInfo> {
-        let proc = procfs::process::Process::new(address.as_u64() as pid_t)
+        let proc = procfs::process::Process::new(address.to_umem() as pid_t)
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?;
 
         let command_line = proc
@@ -147,11 +151,11 @@ impl<'a> OsInner<'a> for LinuxOs {
     fn module_by_address(&mut self, address: Address) -> Result<ModuleInfo> {
         self.cached_modules
             .iter()
-            .skip(address.as_usize())
+            .skip(address.to_umem() as usize)
             .next()
             .map(|km| ModuleInfo {
                 address,
-                size: km.size as usize,
+                size: km.size as umem,
                 base: Address::NULL,
                 name: km
                     .name
@@ -311,13 +315,13 @@ impl Process for LinuxProcess {
 
         self.cached_module_maps
             .iter()
-            .skip(address.as_usize())
+            .skip(address.to_umem() as usize)
             .next()
             .map(|map| ModuleInfo {
                 address,
                 parent_process: self.info.address,
                 base: Address::from(map.address.0 as u64),
-                size: map.address.1 as usize,
+                size: map.address.1 as umem,
                 name: Self::mmap_path_to_name_string(&map.pathname),
                 path: Self::mmap_path_to_path_string(&map.pathname),
                 arch: self.info.sys_arch,
@@ -330,7 +334,7 @@ impl Process for LinuxProcess {
         info: &ModuleInfo,
         callback: ImportCallback,
     ) -> Result<()> {
-        let mut module_image = vec![0u8; info.size];
+        let mut module_image = vec![0u8; info.size as usize];
         self.virt_mem
             .read_raw_into(info.base, &mut module_image)
             .data_part()?;
@@ -338,7 +342,7 @@ impl Process for LinuxProcess {
         use goblin::Object;
 
         fn import_call(
-            iter: impl Iterator<Item = (usize, ReprCString)>,
+            iter: impl Iterator<Item = (umem, ReprCString)>,
             mut callback: ImportCallback,
         ) {
             iter.take_while(|(offset, name)| {
@@ -359,7 +363,7 @@ impl Process for LinuxProcess {
                     .filter_map(|s| {
                         elf.dynstrtab
                             .get_at(s.st_name)
-                            .map(|n| (s.st_value as usize, ReprCString::from(n)))
+                            .map(|n| (s.st_value as umem, ReprCString::from(n)))
                     });
 
                 import_call(iter, callback);
@@ -370,7 +374,7 @@ impl Process for LinuxProcess {
                 let iter = pe
                     .imports
                     .iter()
-                    .map(|e| (e.offset, e.name.as_ref().into()));
+                    .map(|e| (e.offset as umem, e.name.as_ref().into()));
 
                 import_call(iter, callback);
 
@@ -385,7 +389,7 @@ impl Process for LinuxProcess {
         info: &ModuleInfo,
         callback: ExportCallback,
     ) -> Result<()> {
-        let mut module_image = vec![0u8; info.size];
+        let mut module_image = vec![0u8; info.size as usize];
         self.virt_mem
             .read_raw_into(info.base, &mut module_image)
             .data_part()?;
@@ -393,7 +397,7 @@ impl Process for LinuxProcess {
         use goblin::Object;
 
         fn export_call(
-            iter: impl Iterator<Item = (usize, ReprCString)>,
+            iter: impl Iterator<Item = (umem, ReprCString)>,
             mut callback: ExportCallback,
         ) {
             iter.take_while(|(offset, name)| {
@@ -414,7 +418,7 @@ impl Process for LinuxProcess {
                     .filter_map(|s| {
                         elf.dynstrtab
                             .get_at(s.st_name)
-                            .map(|n| (s.st_value as usize, ReprCString::from(n)))
+                            .map(|n| (s.st_value as umem, ReprCString::from(n)))
                     });
 
                 export_call(iter, callback);
@@ -425,7 +429,7 @@ impl Process for LinuxProcess {
                 let iter = pe
                     .exports
                     .iter()
-                    .filter_map(|e| e.name.map(|name| (e.offset, name.into())));
+                    .filter_map(|e| e.name.map(|name| (e.offset as umem, name.into())));
 
                 export_call(iter, callback);
 
@@ -440,7 +444,7 @@ impl Process for LinuxProcess {
         info: &ModuleInfo,
         callback: SectionCallback,
     ) -> Result<()> {
-        let mut module_image = vec![0u8; info.size];
+        let mut module_image = vec![0u8; info.size as usize];
         self.virt_mem
             .read_raw_into(info.base, &mut module_image)
             .data_part()?;
@@ -448,7 +452,7 @@ impl Process for LinuxProcess {
         use goblin::Object;
 
         fn section_call(
-            iter: impl Iterator<Item = (usize, usize, ReprCString)>,
+            iter: impl Iterator<Item = (umem, umem, ReprCString)>,
             mut callback: SectionCallback,
         ) {
             iter.take_while(|(base, size, name)| {
@@ -466,7 +470,7 @@ impl Process for LinuxProcess {
                 let iter = elf.section_headers.iter().filter_map(|s| {
                     elf.shdr_strtab
                         .get_at(s.sh_name)
-                        .map(|n| (s.sh_addr as usize, s.sh_size as usize, ReprCString::from(n)))
+                        .map(|n| (s.sh_addr as umem, s.sh_size as umem, ReprCString::from(n)))
                 });
 
                 section_call(iter, callback);
@@ -477,8 +481,8 @@ impl Process for LinuxProcess {
                 let iter = pe.sections.iter().filter_map(|e| {
                     e.real_name.as_ref().map(|name| {
                         (
-                            e.virtual_address as usize,
-                            e.virtual_size as usize,
+                            e.virtual_address as umem,
+                            e.virtual_size as umem,
                             name.as_str().into(),
                         )
                     })
@@ -597,7 +601,7 @@ impl MemoryView for ProcessVirtualMemory {
             };
 
             riov.0 = iovec {
-                iov_base: a.as_u64() as *mut c_void,
+                iov_base: a.to_umem() as *mut c_void,
                 iov_len,
             };
 
@@ -664,7 +668,7 @@ impl MemoryView for ProcessVirtualMemory {
             };
 
             riov.0 = iovec {
-                iov_base: a.as_u64() as *mut c_void,
+                iov_base: a.to_umem() as *mut c_void,
                 iov_len,
             };
 
@@ -736,7 +740,7 @@ impl VirtualTranslate for LinuxProcess {
 
     fn virt_page_map_range(
         &mut self,
-        gap_size: usize,
+        gap_size: umem,
         start: Address,
         end: Address,
         out: MemoryRangeCallback,
@@ -757,13 +761,13 @@ impl VirtualTranslate for LinuxProcess {
                 .map(|map| {
                     (
                         Address::from(map.address.0),
-                        (map.address.1 - map.address.0) as usize,
+                        (map.address.1 - map.address.0) as umem,
                     )
                 })
                 .map(|(s, sz)| {
                     if s < start {
                         let diff = start - s;
-                        (start, sz - diff)
+                        (start, sz - diff as umem)
                     } else {
                         (s, sz)
                     }
@@ -771,14 +775,14 @@ impl VirtualTranslate for LinuxProcess {
                 .map(|(s, sz)| {
                     if s + sz > end {
                         let diff = s - end;
-                        (s, sz - diff)
+                        (s, sz - diff as umem)
                     } else {
                         (s, sz)
                     }
                 })
                 .coalesce(|a, b| {
                     if a.0 + a.1 + gap_size >= b.0 {
-                        Ok((a.0, b.0 - a.0 + b.1))
+                        Ok((a.0, (b.0 - a.0) as umem + b.1))
                     } else {
                         Err((a, b))
                     }

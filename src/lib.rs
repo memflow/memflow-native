@@ -3,6 +3,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxOs as NativeOs;
 
+use memflow::cglue;
 use memflow::os::root::*;
 use memflow::prelude::v1::*;
 
