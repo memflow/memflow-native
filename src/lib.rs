@@ -1,4 +1,3 @@
-#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxOs as NativeOs;
@@ -13,7 +12,7 @@ cglue_impl_group!(NativeOs, OsInstance, {});
 pub fn build_kernel(
     _args: &Args,
     _: Option<ConnectorInstanceArcBox<'static>>,
-    lib: COptArc<std::ffi::c_void>,
+    lib: CArc<std::ffi::c_void>,
     log_level: log::Level,
 ) -> Result<OsInstanceArcBox<'static>> {
     simple_logger::SimpleLogger::new()

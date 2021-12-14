@@ -1,5 +1,5 @@
 [package]
-name = "memflow-system-proxy"
+name = "memflow-native"
 version = "0.1.0"
 authors = ["Aurimas Blažulionis <0x60@pm.me>"]
 edition = "2018"
