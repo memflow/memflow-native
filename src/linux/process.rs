@@ -389,7 +389,7 @@ impl VirtualTranslate for LinuxProcess {
 
     fn virt_page_map_range(
         &mut self,
-        gap_size: umem,
+        gap_size: imem,
         start: Address,
         end: Address,
         out: MemoryRangeCallback,
@@ -430,7 +430,7 @@ impl VirtualTranslate for LinuxProcess {
                     }
                 })
                 .coalesce(|a, b| {
-                    if a.0 + a.1 + gap_size >= b.0 {
+                    if gap_size >= 0 && a.0 + a.1 + gap_size as umem >= b.0 {
                         Ok((a.0, (b.0 - a.0) as umem + b.1))
                     } else {
                         Err((a, b))
