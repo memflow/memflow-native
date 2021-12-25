@@ -1,5 +1,4 @@
 use memflow::cglue;
-use memflow::mem::virt_translate::*;
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
 
@@ -66,8 +65,8 @@ impl LinuxProcess {
     }
 }
 
-cglue_impl_group!(LinuxProcess, ProcessInstance, { VirtualTranslate });
-cglue_impl_group!(LinuxProcess, IntoProcessInstance, { VirtualTranslate });
+cglue_impl_group!(LinuxProcess, ProcessInstance, {});
+cglue_impl_group!(LinuxProcess, IntoProcessInstance, {});
 
 impl Process for LinuxProcess {
     /// Walks the process' module list and calls the provided callback for each module structure
@@ -347,47 +346,8 @@ impl Process for LinuxProcess {
     fn state(&mut self) -> ProcessState {
         ProcessState::Unknown
     }
-}
 
-impl MemoryView for LinuxProcess {
-    fn read_raw_iter<'a>(
-        &mut self,
-        data: CIterator<ReadData<'a>>,
-        out_fail: &mut ReadFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.read_raw_iter(data, out_fail)
-    }
-
-    fn write_raw_iter<'a>(
-        &mut self,
-        data: CIterator<WriteData<'a>>,
-        out_fail: &mut WriteFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.write_raw_iter(data, out_fail)
-    }
-
-    fn metadata(&self) -> MemoryViewMetadata {
-        self.virt_mem.metadata()
-    }
-}
-
-impl VirtualTranslate for LinuxProcess {
-    fn virt_to_phys_list(
-        &mut self,
-        addrs: &[MemoryRange],
-        _out: VirtualTranslationCallback,
-        out_fail: VirtualTranslationFailCallback,
-    ) {
-        addrs
-            .iter()
-            .map(|&MemoryRange { address, size }| VirtualTranslationFail {
-                from: address,
-                size,
-            })
-            .feed_into(out_fail);
-    }
-
-    fn virt_page_map_range(
+    fn mapped_mem_range(
         &mut self,
         gap_size: imem,
         start: Address,
@@ -436,8 +396,30 @@ impl VirtualTranslate for LinuxProcess {
                         Err((a, b))
                     }
                 })
-                .map(|(address, size)| MemoryRange { address, size })
+                .map(<_>::into)
                 .feed_into(out);
         }
+    }
+}
+
+impl MemoryView for LinuxProcess {
+    fn read_raw_iter<'a>(
+        &mut self,
+        data: CIterator<ReadData<'a>>,
+        out_fail: &mut ReadFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        self.virt_mem.read_raw_iter(data, out_fail)
+    }
+
+    fn write_raw_iter<'a>(
+        &mut self,
+        data: CIterator<WriteData<'a>>,
+        out_fail: &mut WriteFailCallback<'_, 'a>,
+    ) -> Result<()> {
+        self.virt_mem.write_raw_iter(data, out_fail)
+    }
+
+    fn metadata(&self) -> MemoryViewMetadata {
+        self.virt_mem.metadata()
     }
 }

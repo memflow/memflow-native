@@ -12,6 +12,7 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 #cglue = { path = "../cglue/cglue/" }
+#memflow = { path = "../memflow/memflow", features = ["plugins"] }
 memflow = { git = "https://github.com/memflow/memflow", branch = "next", features = ["plugins"] }
 memflow-derive = { git = "https://github.com/memflow/memflow.git", branch = "next" }
 log = "0.4"
