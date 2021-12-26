@@ -18,6 +18,12 @@ pub struct LinuxOs {
     cached_modules: Vec<KernelModule>,
 }
 
+impl LinuxOs {
+    pub fn new(_: &OsArgs) -> Result<Self> {
+        Ok(Default::default())
+    }
+}
+
 impl Clone for LinuxOs {
     fn clone(&self) -> Self {
         Self {

@@ -1,6 +1,7 @@
 use memflow::cglue;
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
+use memflow::types::util::GapRemover;
 
 use super::{conv_err, ProcessVirtualMemory};
 
@@ -12,16 +13,17 @@ use windows::Win32::System::ProcessStatus::{
     LIST_MODULES_64BIT,
 };
 
+use windows::Win32::System::Memory::{
+    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_FREE, MEM_RESERVE,
+};
+
 use core::mem::{size_of, size_of_val};
 
 #[derive(Clone)]
 pub struct WindowsProcess {
     virt_mem: ProcessVirtualMemory,
-    //proc: procfs::process::Process,
     info: ProcessInfo,
     cached_modules: Vec<HINSTANCE>,
-    //cached_maps: Vec<procfs::process::MemoryMap>,
-    //cached_module_maps: Vec<procfs::process::MemoryMap>,
 }
 
 impl WindowsProcess {
@@ -78,13 +80,16 @@ impl Process for WindowsProcess {
                     .map_err(conv_err)?
                 }
 
+                needed /= size_of::<HINSTANCE>() as u32;
+
                 if needed as usize <= self.cached_modules.len() {
-                    self.cached_modules.resize(needed as _, 0);
                     break;
                 }
 
                 self.cached_modules.resize(self.cached_modules.len() * 2, 0);
             }
+
+            self.cached_modules.resize(needed as _, 0);
 
             // TODO: ARM STUFF
             let arch = match f {
@@ -204,7 +209,38 @@ impl Process for WindowsProcess {
         end: Address,
         out: MemoryRangeCallback,
     ) {
-        //todo!()
+        let mut gap_remover = GapRemover::new(out, gap_size, start, end);
+
+        let mut region = Default::default();
+
+        let mut needed = 0;
+        let mut cur_addr = start;
+
+        while unsafe {
+            VirtualQueryEx(
+                **self.virt_mem.handle,
+                cur_addr.to_umem() as *mut _,
+                &mut region,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        } > 0
+            && cur_addr < end
+        {
+            cur_addr = Address::from(
+                (region.BaseAddress as umem).saturating_add(region.RegionSize as umem),
+            );
+
+            if region.State == MEM_FREE || region.State == MEM_RESERVE || region.RegionSize == 0 {
+                continue;
+            }
+
+            let range = MemData(
+                Address::from(region.BaseAddress as umem),
+                region.RegionSize as _,
+            );
+
+            gap_remover.push_range(range);
+        }
     }
 }
 

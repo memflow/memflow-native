@@ -3,11 +3,18 @@ use memflow::prelude::v1::*;
 
 use itertools::Itertools;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, PSTR};
 
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, CREATE_TOOLHELP_SNAPSHOT_FLAGS,
     PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+use windows::Win32::Security::{
+    AdjustTokenPrivileges, LookupPrivilegeValueA, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+    TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
 };
 
 use core::mem::{size_of, MaybeUninit};
@@ -51,10 +58,63 @@ pub fn conv_err(err: windows::core::Error) -> Error {
     Error(ErrorOrigin::OsLayer, ErrorKind::Unknown)
 }
 
+unsafe fn enable_debug_privilege() -> Result<()> {
+    let process = GetCurrentProcess();
+    let mut token = HANDLE(0);
+
+    OpenProcessToken(process, TOKEN_ADJUST_PRIVILEGES, &mut token)
+        .ok()
+        .map_err(conv_err)?;
+
+    let mut luid = Default::default();
+
+    let mut se_debug_name = *b"SeDebugPrivilege\0";
+
+    LookupPrivilegeValueA(
+        PSTR(core::ptr::null_mut()),
+        PSTR(se_debug_name.as_mut_ptr()),
+        &mut luid,
+    )
+    .ok()
+    .map_err(conv_err)?;
+
+    let new_privileges = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: [LUID_AND_ATTRIBUTES {
+            Luid: luid,
+            Attributes: SE_PRIVILEGE_ENABLED,
+        }],
+    };
+
+    AdjustTokenPrivileges(
+        token,
+        false,
+        &new_privileges,
+        std::mem::size_of_val(&new_privileges) as _,
+        core::ptr::null_mut(),
+        core::ptr::null_mut(),
+    )
+    .ok()
+    .map_err(conv_err)
+}
+
 pub struct WindowsOs {
     info: OsInfo,
     cached_processes: Vec<ProcessInfo>,
     cached_modules: Vec<KernelModule>,
+}
+
+impl WindowsOs {
+    pub fn new(args: &OsArgs) -> Result<Self> {
+        match args.extra_args.get("elevate_token") {
+            Some("off") | Some("OFF") | Some("Off") | Some("n") | Some("N") | Some("0") => {}
+            _ => {
+                unsafe { enable_debug_privilege() }?;
+            }
+        }
+
+        Ok(Default::default())
+    }
 }
 
 impl Clone for WindowsOs {

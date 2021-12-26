@@ -15,10 +15,10 @@ cglue_impl_group!(NativeOs, OsInstance, {});
 
 #[os_layer_bare(name = "native")]
 pub fn build_os(
-    _args: &OsArgs,
+    args: &OsArgs,
     _: Option<ConnectorInstanceArcBox<'static>>,
-    lib: CArc<std::ffi::c_void>,
+    lib: LibArc,
 ) -> Result<OsInstanceArcBox<'static>> {
     log::info!("Initialize native OS!");
-    Ok(group_obj!((NativeOs::default(), lib) as OsInstance))
+    Ok(group_obj!((NativeOs::new(&args)?, lib) as OsInstance))
 }
