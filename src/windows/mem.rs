@@ -79,7 +79,7 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
         size: usize,
     ) -> Result<usize> {
         let mut written = 0;
-        WriteProcessMemory(**handle, remote, local as _, size, &mut written)
+        ReadProcessMemory(**handle, remote, local as _, size, &mut written)
             .ok()
             .map_err(conv_err)?;
         Ok(written)
