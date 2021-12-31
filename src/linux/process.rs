@@ -99,7 +99,8 @@ impl Process for LinuxProcess {
             .cloned()
             .coalesce(|m1, m2| {
                 if m1.address.1 == m2.address.0
-                    && m2.offset - m1.offset == m1.address.1 - m1.address.0
+                    // When the file gets mapped in memory, offsets change.
+                    // && m2.offset - m1.offset == m1.address.1 - m1.address.0
                     && m1.dev == m2.dev
                     && m1.inode == m2.inode
                 {
@@ -154,7 +155,7 @@ impl Process for LinuxProcess {
                 address,
                 parent_process: self.info.address,
                 base: Address::from(map.address.0 as u64),
-                size: map.address.1 as umem,
+                size: (map.address.1 - map.address.0) as umem,
                 name: Self::mmap_path_to_name_string(&map.pathname),
                 path: Self::mmap_path_to_path_string(&map.pathname),
                 arch: self.info.sys_arch,

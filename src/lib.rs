@@ -13,7 +13,7 @@ use memflow::prelude::v1::*;
 
 cglue_impl_group!(NativeOs, OsInstance, {});
 
-#[os_layer_bare(name = "native")]
+#[cfg_attr(feature = "plugins", os_layer_bare(name = "native"))]
 pub fn build_os(
     args: &OsArgs,
     _: Option<ConnectorInstanceArcBox<'static>>,

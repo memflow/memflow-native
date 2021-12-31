@@ -157,23 +157,26 @@ impl ProcessVirtualMemory {
                         _ => {
                             let mut remaining_written = libcret as usize + 1;
 
+                            let mut addoff1 = 0;
+
                             let iter = iov_local
                                 .iter()
                                 .take(cnt)
+                                .enumerate()
                                 .zip(iov_remote.iter())
-                                .skip_while(|(a, _)| {
+                                .skip_while(|((_, a), _)| {
                                     remaining_written =
                                         remaining_written.saturating_sub(a.0.iov_len);
-                                    offset += 1;
+                                    addoff1 += 1;
                                     remaining_written > 0
                                 });
 
-                            let mut addoff = 0;
+                            let mut addoff2 = 0;
 
                             // This will take only the first unread element and write it to the
                             // failed list, because it could be that only it is invalid.
-                            for (liov, riov) in iter.take(1) {
-                                addoff += 1;
+                            for ((i, liov), riov) in iter.take(1) {
+                                addoff2 = i;
                                 if !out_fail
                                     .call(MemData(Address::from(riov.0.iov_base as umem), unsafe {
                                         T::from_iovec(liov.0)
@@ -183,7 +186,7 @@ impl ProcessVirtualMemory {
                                 }
                             }
 
-                            offset += addoff;
+                            offset += core::cmp::max(addoff1, addoff2);
                         }
                     }
                 }

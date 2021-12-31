@@ -33,3 +33,7 @@ windows = { version = "0.29", features = [
 	"Win32_Security",
 	"Win32_System_Memory"
 ] }
+
+[features]
+default = []
+plugins = []
