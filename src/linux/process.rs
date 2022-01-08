@@ -89,13 +89,7 @@ impl Process for LinuxProcess {
         self.cached_module_maps = self
             .cached_maps
             .iter()
-            .filter(|map| {
-                if let MMapPath::Path(_) = map.pathname {
-                    true
-                } else {
-                    false
-                }
-            })
+            .filter(|map| matches!(map.pathname, MMapPath::Path(_)))
             .cloned()
             .coalesce(|m1, m2| {
                 if m1.address.1 == m2.address.0
@@ -148,9 +142,7 @@ impl Process for LinuxProcess {
         }
 
         self.cached_module_maps
-            .iter()
-            .skip(address.to_umem() as usize)
-            .next()
+            .get(address.to_umem() as usize)
             .map(|map| ModuleInfo {
                 address,
                 parent_process: self.info.address,

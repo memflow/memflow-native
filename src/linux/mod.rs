@@ -94,7 +94,7 @@ impl<'a> OsInner<'a> for LinuxOs {
                 proc.status()
                     .ok()
                     .map(|s| s.name)
-                    .unwrap_or("unknown".to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
             });
 
         let name = path.split(&['/', '\\'][..]).last().unwrap().into();
@@ -153,16 +153,14 @@ impl<'a> OsInner<'a> for LinuxOs {
     /// * `address` - address where module's information resides in
     fn module_by_address(&mut self, address: Address) -> Result<ModuleInfo> {
         self.cached_modules
-            .iter()
-            .skip(address.to_umem() as usize)
-            .next()
+            .get(address.to_umem() as usize)
             .map(|km| ModuleInfo {
                 address,
                 size: km.size as umem,
                 base: Address::NULL,
                 name: km
                     .name
-                    .split("/")
+                    .split('/')
                     .last()
                     .or(Some(""))
                     .map(ReprCString::from)
