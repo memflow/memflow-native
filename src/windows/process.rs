@@ -5,8 +5,6 @@ use memflow::types::util::GapRemover;
 
 use super::{conv_err, ProcessVirtualMemory};
 
-use itertools::Itertools;
-
 use windows::Win32::Foundation::{HINSTANCE, PSTR};
 use windows::Win32::System::ProcessStatus::{
     K32EnumProcessModulesEx, K32GetModuleFileNameExA, K32GetModuleInformation, LIST_MODULES_32BIT,
@@ -213,7 +211,6 @@ impl Process for WindowsProcess {
 
         let mut region = Default::default();
 
-        let mut needed = 0;
         let mut cur_addr = start;
 
         while unsafe {

@@ -31,6 +31,7 @@ impl ProcessVirtualMemory {
         Ok(Self { handle })
     }
 
+    #[allow(unused)]
     fn vm_error() -> Option<ErrorKind> {
         let ret = /*match unsafe { *libc::__errno_location() } {
             libc::EFAULT => return None,
@@ -90,7 +91,7 @@ impl ProcessVirtualMemory {
     /// Generic read/write implementation for linux.
     fn process_rw<'a, T: RWSlice + SplitAtIndex>(
         &mut self,
-        mut data: CIterator<MemData<Address, T>>,
+        data: CIterator<MemData<Address, T>>,
         out_fail: &mut OpaqueCallback<'a, MemData<Address, T>>,
     ) -> Result<()> {
         for MemData(addr, buf) in data {

@@ -1,12 +1,10 @@
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
 
-use itertools::Itertools;
-
 use windows::Win32::Foundation::{CloseHandle, HANDLE, PSTR};
 
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, CREATE_TOOLHELP_SNAPSHOT_FLAGS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
     PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
@@ -52,7 +50,7 @@ impl Drop for Handle {
     }
 }
 
-pub fn conv_err(err: windows::core::Error) -> Error {
+pub fn conv_err(_err: windows::core::Error) -> Error {
     // TODO: proper error kind
     // TODO: proper origin
     Error(ErrorOrigin::OsLayer, ErrorKind::Unknown)
@@ -150,7 +148,7 @@ impl<'a> OsInner<'a> for WindowsOs {
     /// Walks a process list and calls a callback for each process structure address
     ///
     /// The callback is fully opaque. We need this style so that C FFI can work seamlessly.
-    fn process_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
+    fn process_address_list_callback(&mut self, callback: AddressCallback) -> Result<()> {
         let handle = Handle(
             unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
                 .ok()
@@ -248,7 +246,7 @@ impl<'a> OsInner<'a> for WindowsOs {
     ///
     /// # Arguments
     /// * `address` - address where module's information resides in
-    fn module_by_address(&mut self, address: Address) -> Result<ModuleInfo> {
+    fn module_by_address(&mut self, _address: Address) -> Result<ModuleInfo> {
         /*self.cached_modules
         .iter()
         .skip(address.to_umem() as usize)
