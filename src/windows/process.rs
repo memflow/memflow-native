@@ -59,7 +59,7 @@ impl Process for WindowsProcess {
             None => [Some(LIST_MODULES_32BIT), Some(LIST_MODULES_64BIT)],
         };
 
-        for f in IntoIterator::into_iter(filter_flags).filter_map(|i| i) {
+        for f in IntoIterator::into_iter(filter_flags).flatten() {
             self.cached_modules.clear();
             self.cached_modules.resize(1024, 0);
 

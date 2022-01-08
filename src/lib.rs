@@ -20,5 +20,5 @@ pub fn build_os(
     lib: LibArc,
 ) -> Result<OsInstanceArcBox<'static>> {
     log::info!("Initialize native OS!");
-    Ok(group_obj!((NativeOs::new(&args)?, lib) as OsInstance))
+    Ok(group_obj!((NativeOs::new(args)?, lib) as OsInstance))
 }

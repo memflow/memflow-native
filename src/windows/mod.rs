@@ -178,7 +178,7 @@ impl<'a> OsInner<'a> for WindowsOs {
                 let path = OsString::from_wide(&p.szExeFile[..len]);
                 let path = path.to_string_lossy();
                 let path = &*path;
-                let name = path.rsplit_once("\\").map(|(_, end)| end).unwrap_or(&path);
+                let name = path.rsplit_once("\\").map(|(_, end)| end).unwrap_or(path);
 
                 self.cached_processes.push(ProcessInfo {
                     address,
