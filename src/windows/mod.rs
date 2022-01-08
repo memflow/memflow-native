@@ -4,8 +4,7 @@ use memflow::prelude::v1::*;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, PSTR};
 
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
-    PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
