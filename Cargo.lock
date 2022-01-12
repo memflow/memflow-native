@@ -153,7 +153,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "cglue"
 version = "0.2.5"
-source = "git+https://github.com/h33p/cglue?branch=main#02e0f1089fe942edcda0391d12a008b6459bcc99"
+source = "git+https://github.com/h33p/cglue?branch=main#d85d2e83bd6f5eb6331174fbdc322418031f051b"
 dependencies = [
  "abi_stable",
  "cglue-macro",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "cglue-gen"
 version = "0.2.2"
-source = "git+https://github.com/h33p/cglue?branch=main#02e0f1089fe942edcda0391d12a008b6459bcc99"
+source = "git+https://github.com/h33p/cglue?branch=main#d85d2e83bd6f5eb6331174fbdc322418031f051b"
 dependencies = [
  "itertools",
  "lazy_static",
@@ -177,7 +177,7 @@ dependencies = [
 [[package]]
 name = "cglue-macro"
 version = "0.2.1"
-source = "git+https://github.com/h33p/cglue?branch=main#02e0f1089fe942edcda0391d12a008b6459bcc99"
+source = "git+https://github.com/h33p/cglue?branch=main#d85d2e83bd6f5eb6331174fbdc322418031f051b"
 dependencies = [
  "cglue-gen",
  "proc-macro2",
@@ -476,7 +476,7 @@ checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
 [[package]]
 name = "memflow"
 version = "0.1.5"
-source = "git+https://github.com/memflow/memflow?branch=next#8627a9d575206461bec2b9c236a80af4879259e3"
+source = "git+https://github.com/memflow/memflow?branch=next#330f651c199db47c9e253fc6bbff60008ead0042"
 dependencies = [
  "abi_stable",
  "bitflags",
@@ -495,6 +495,7 @@ dependencies = [
  "memmap",
  "no-std-compat",
  "once_cell",
+ "pelite",
  "rangemap",
  "serde",
  "smallvec",
@@ -505,7 +506,7 @@ dependencies = [
 [[package]]
 name = "memflow-derive"
 version = "0.1.5"
-source = "git+https://github.com/memflow/memflow?branch=next#8627a9d575206461bec2b9c236a80af4879259e3"
+source = "git+https://github.com/memflow/memflow?branch=next#330f651c199db47c9e253fc6bbff60008ead0042"
 dependencies = [
  "darling",
  "proc-macro-crate",
@@ -618,6 +619,23 @@ name = "paste"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0744126afe1a6dd7f394cb50a716dbe086cb06e255e53d8d0185d82828358fb5"
+
+[[package]]
+name = "pelite"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c270b1a0c279bbcb4cff3d2294121731c48ee68f0435d26cf71018a853cb890"
+dependencies = [
+ "dataview",
+ "no-std-compat",
+ "pelite-macros",
+]
+
+[[package]]
+name = "pelite-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7cf3f8ecebb0f4895f4892a8be0a0dc81b498f9d56735cb769dc31bf00815b"
 
 [[package]]
 name = "plain"

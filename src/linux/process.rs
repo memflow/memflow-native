@@ -141,6 +141,8 @@ impl Process for LinuxProcess {
             return Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound));
         }
 
+        // TODO: create cached_module_maps if its empty
+
         self.cached_module_maps
             .get(address.to_umem() as usize)
             .map(|map| ModuleInfo {
