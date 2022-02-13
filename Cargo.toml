@@ -5,7 +5,8 @@ authors = ["Aurimas Blažulionis <0x60@pm.me>", "ko1N <ko1N1337@gmail.com>"]
 edition = "2018"
 description = "System call based proxy-OS for memflow"
 readme = "README.md"
-license = "LICENSE"
+license-file = "LICENSE"
+license = "MIT"
 
 [lib]
 crate-type = ["lib", "cdylib"]
