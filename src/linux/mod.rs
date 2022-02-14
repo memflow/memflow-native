@@ -72,7 +72,11 @@ impl<'a> OsInner<'a> for LinuxOs {
 
     /// Find process information by its internal address
     fn process_info_by_address(&mut self, address: Address) -> Result<ProcessInfo> {
-        let proc = procfs::process::Process::new(address.to_umem() as pid_t)
+        self.process_info_by_pid(address.to_umem() as _)
+    }
+
+    fn process_info_by_pid(&mut self, pid: Pid) -> Result<ProcessInfo> {
+        let proc = procfs::process::Process::new(pid as pid_t)
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?;
 
         let command_line = proc
@@ -102,8 +106,8 @@ impl<'a> OsInner<'a> for LinuxOs {
         let path = path.into();
 
         Ok(ProcessInfo {
-            address,
-            pid: proc.pid() as Pid,
+            address: (proc.pid() as umem).into(),
+            pid,
             command_line,
             path,
             name,
