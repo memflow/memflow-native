@@ -14,6 +14,7 @@ unsafe impl Send for IoSendVec {}
 pub struct ProcessVirtualMemory {
     pid: pid_t,
     temp_iov: Box<[IoSendVec]>,
+    temp_meta: Box<[Address]>,
 }
 
 impl ProcessVirtualMemory {
@@ -32,6 +33,7 @@ impl ProcessVirtualMemory {
                 iov_max * 2
             ]
             .into_boxed_slice(),
+            temp_meta: vec![Address::INVALID; iov_max].into_boxed_slice(),
         }
     }
 
@@ -97,19 +99,25 @@ impl ProcessVirtualMemory {
     /// Generic read/write implementation for linux.
     fn process_rw<'a, T: RWSlice>(
         &mut self,
-        mut data: CIterator<MemData<Address, T>>,
-        out_fail: &mut OpaqueCallback<'a, MemData<Address, T>>,
+        MemOps {
+            mut inp,
+            mut out,
+            mut out_fail,
+        }: MemOps<MemData3<Address, Address, T>, MemData2<Address, T>>,
     ) -> Result<()> {
         let max_iov = self.temp_iov.len() / 2;
         let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
 
-        let mut iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+        let mut iov_iter = iov_local
+            .iter_mut()
+            .zip(iov_remote.iter_mut().zip(self.temp_meta.iter_mut()))
+            .enumerate();
         let mut iov_next = iov_iter.next();
 
-        let mut elem = data.next();
+        let mut elem = inp.next();
 
-        'exit: while let Some(MemData(a, b)) = elem {
-            let (cnt, (liov, riov)) = iov_next.unwrap();
+        'exit: while let Some(MemData3(a, m, b)) = elem {
+            let (cnt, (liov, (riov, meta))) = iov_next.unwrap();
 
             let iov_len = b.len();
 
@@ -123,8 +131,10 @@ impl ProcessVirtualMemory {
                 iov_len,
             };
 
+            *meta = m;
+
             iov_next = iov_iter.next();
-            elem = data.next();
+            elem = inp.next();
 
             if elem.is_none() || iov_next.is_none() {
                 let mut offset = 0;
@@ -157,41 +167,44 @@ impl ProcessVirtualMemory {
                         _ => {
                             let mut remaining_written = libcret as usize + 1;
 
-                            let mut addoff1 = 0;
-
-                            let iter = iov_local
+                            for (liof, (_, meta)) in iov_local
                                 .iter()
                                 .take(cnt)
-                                .enumerate()
-                                .zip(iov_remote.iter())
-                                .skip_while(|((_, a), _)| {
-                                    remaining_written =
-                                        remaining_written.saturating_sub(a.0.iov_len);
-                                    addoff1 += 1;
-                                    remaining_written > 0
-                                });
+                                .zip(iov_remote.iter().zip(self.temp_meta.iter()))
+                            {
+                                offset += 1;
+                                let to_write = remaining_written;
 
-                            let mut addoff2 = 0;
+                                remaining_written =
+                                    remaining_written.saturating_sub(liof.0.iov_len);
 
-                            // This will take only the first unread element and write it to the
-                            // failed list, because it could be that only it is invalid.
-                            for ((i, liov), riov) in iter.take(1) {
-                                addoff2 = i;
-                                if !out_fail
-                                    .call(MemData(Address::from(riov.0.iov_base as umem), unsafe {
-                                        T::from_iovec(liov.0)
-                                    }))
-                                {
-                                    break 'exit;
+                                if to_write > 0 {
+                                    if !opt_call(
+                                        out.as_deref_mut(),
+                                        MemData2(*meta, unsafe { T::from_iovec(liof.0) }),
+                                    ) {
+                                        break 'exit;
+                                    }
+                                } else {
+                                    // This will take only the first unread element and write it to the
+                                    // failed list, because it could be that only it is invalid.
+                                    if !opt_call(
+                                        out_fail.as_deref_mut(),
+                                        MemData2(*meta, unsafe { T::from_iovec(liof.0) }),
+                                    ) {
+                                        break 'exit;
+                                    }
+                                    break;
                                 }
                             }
-
-                            offset += core::cmp::max(addoff1, addoff2);
                         }
                     }
                 }
 
-                iov_iter = iov_local.iter_mut().zip(iov_remote.iter_mut()).enumerate();
+                iov_iter = iov_local
+                    .iter_mut()
+                    .zip(iov_remote.iter_mut().zip(self.temp_meta.iter_mut()))
+                    .enumerate();
                 iov_next = iov_iter.next();
             }
         }
@@ -201,20 +214,12 @@ impl ProcessVirtualMemory {
 }
 
 impl MemoryView for ProcessVirtualMemory {
-    fn read_raw_iter<'a>(
-        &mut self,
-        data: CIterator<ReadData<'a>>,
-        out_fail: &mut ReadFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.process_rw(data, out_fail)
+    fn read_raw_iter<'a>(&mut self, data: ReadRawMemOps) -> Result<()> {
+        self.process_rw(data)
     }
 
-    fn write_raw_iter<'a>(
-        &mut self,
-        data: CIterator<WriteData<'a>>,
-        out_fail: &mut WriteFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.process_rw(data, out_fail)
+    fn write_raw_iter<'a>(&mut self, data: WriteRawMemOps) -> Result<()> {
+        self.process_rw(data)
     }
 
     fn metadata(&self) -> MemoryViewMetadata {

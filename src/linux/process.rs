@@ -223,27 +223,30 @@ impl Process for LinuxProcess {
                     (
                         Address::from(map.address.0),
                         (map.address.1 - map.address.0) as umem,
+                        PageType::empty()
+                            .noexec(!map.perms.contains("x"))
+                            .write(map.perms.contains("w")),
                     )
                 })
-                .map(|(s, sz)| {
+                .map(|(s, sz, perms)| {
                     if s < start {
                         let diff = start - s;
-                        (start, sz - diff as umem)
+                        (start, sz - diff as umem, perms)
                     } else {
-                        (s, sz)
+                        (s, sz, perms)
                     }
                 })
-                .map(|(s, sz)| {
+                .map(|(s, sz, perms)| {
                     if s + sz > end {
                         let diff = s - end;
-                        (s, sz - diff as umem)
+                        (s, sz - diff as umem, perms)
                     } else {
-                        (s, sz)
+                        (s, sz, perms)
                     }
                 })
                 .coalesce(|a, b| {
-                    if gap_size >= 0 && a.0 + a.1 + gap_size as umem >= b.0 {
-                        Ok((a.0, (b.0 - a.0) as umem + b.1))
+                    if gap_size >= 0 && a.0 + a.1 + gap_size as umem >= b.0 && a.2 == b.2 {
+                        Ok((a.0, (b.0 - a.0) as umem + b.1, a.2))
                     } else {
                         Err((a, b))
                     }
@@ -255,20 +258,12 @@ impl Process for LinuxProcess {
 }
 
 impl MemoryView for LinuxProcess {
-    fn read_raw_iter<'a>(
-        &mut self,
-        data: CIterator<ReadData<'a>>,
-        out_fail: &mut ReadFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.read_raw_iter(data, out_fail)
+    fn read_raw_iter(&mut self, data: ReadRawMemOps) -> Result<()> {
+        self.virt_mem.read_raw_iter(data)
     }
 
-    fn write_raw_iter<'a>(
-        &mut self,
-        data: CIterator<WriteData<'a>>,
-        out_fail: &mut WriteFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.write_raw_iter(data, out_fail)
+    fn write_raw_iter(&mut self, data: WriteRawMemOps) -> Result<()> {
+        self.virt_mem.write_raw_iter(data)
     }
 
     fn metadata(&self) -> MemoryViewMetadata {
