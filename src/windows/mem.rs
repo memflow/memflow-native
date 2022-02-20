@@ -89,12 +89,15 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
 
 impl ProcessVirtualMemory {
     /// Generic read/write implementation for linux.
-    fn process_rw<'a, T: RWSlice + SplitAtIndex>(
+    fn process_rw<T: RWSlice + SplitAtIndex>(
         &mut self,
-        data: CIterator<MemData<Address, T>>,
-        out_fail: &mut OpaqueCallback<'a, MemData<Address, T>>,
+        MemOps {
+            inp,
+            mut out,
+            mut out_fail,
+        }: MemOps<CTup3<Address, Address, T>, CTup2<Address, T>>,
     ) -> Result<()> {
-        for MemData(addr, buf) in data {
+        for CTup3(addr, meta_addr, buf) in inp {
             let written = unsafe {
                 T::do_rw(
                     &*self.handle,
@@ -105,8 +108,18 @@ impl ProcessVirtualMemory {
             }
             .unwrap_or(0);
 
-            if let (_, Some(fail)) = buf.split_at(written as _) {
-                if !out_fail.call(MemData(addr + written, fail)) {
+            let (succeed, fail) = buf.split_at(written as _);
+
+            if let Some(succeed) = succeed {
+                if succeed.len() > 0 && !opt_call(out.as_deref_mut(), CTup2(meta_addr, succeed)) {
+                    break;
+                }
+            }
+
+            if let Some(fail) = fail {
+                if fail.len() > 0
+                    && !opt_call(out_fail.as_deref_mut(), CTup2(meta_addr + written, fail))
+                {
                     break;
                 }
             }
@@ -117,20 +130,12 @@ impl ProcessVirtualMemory {
 }
 
 impl MemoryView for ProcessVirtualMemory {
-    fn read_raw_iter<'a>(
-        &mut self,
-        data: CIterator<ReadData<'a>>,
-        out_fail: &mut ReadFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.process_rw(data, out_fail)
+    fn read_raw_iter(&mut self, data: ReadRawMemOps) -> Result<()> {
+        self.process_rw(data)
     }
 
-    fn write_raw_iter<'a>(
-        &mut self,
-        data: CIterator<WriteData<'a>>,
-        out_fail: &mut WriteFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.process_rw(data, out_fail)
+    fn write_raw_iter(&mut self, data: WriteRawMemOps) -> Result<()> {
+        self.process_rw(data)
     }
 
     fn metadata(&self) -> MemoryViewMetadata {

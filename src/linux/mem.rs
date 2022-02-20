@@ -103,7 +103,7 @@ impl ProcessVirtualMemory {
             mut inp,
             mut out,
             mut out_fail,
-        }: MemOps<MemData3<Address, Address, T>, MemData2<Address, T>>,
+        }: MemOps<CTup3<Address, Address, T>, CTup2<Address, T>>,
     ) -> Result<()> {
         let max_iov = self.temp_iov.len() / 2;
         let (iov_local, iov_remote) = self.temp_iov.split_at_mut(max_iov);
@@ -116,7 +116,7 @@ impl ProcessVirtualMemory {
 
         let mut elem = inp.next();
 
-        'exit: while let Some(MemData3(a, m, b)) = elem {
+        'exit: while let Some(CTup3(a, m, b)) = elem {
             let (cnt, (liov, (riov, meta))) = iov_next.unwrap();
 
             let iov_len = b.len();
@@ -181,7 +181,7 @@ impl ProcessVirtualMemory {
                                 if to_write > 0 {
                                     if !opt_call(
                                         out.as_deref_mut(),
-                                        MemData2(*meta, unsafe { T::from_iovec(liof.0) }),
+                                        CTup2(*meta, unsafe { T::from_iovec(liof.0) }),
                                     ) {
                                         break 'exit;
                                     }
@@ -190,7 +190,7 @@ impl ProcessVirtualMemory {
                                     // failed list, because it could be that only it is invalid.
                                     if !opt_call(
                                         out_fail.as_deref_mut(),
-                                        MemData2(*meta, unsafe { T::from_iovec(liof.0) }),
+                                        CTup2(*meta, unsafe { T::from_iovec(liof.0) }),
                                     ) {
                                         break 'exit;
                                     }

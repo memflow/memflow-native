@@ -12,7 +12,9 @@ use windows::Win32::System::ProcessStatus::{
 };
 
 use windows::Win32::System::Memory::{
-    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_FREE, MEM_RESERVE,
+    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_FREE, MEM_RESERVE, PAGE_EXECUTE,
+    PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_READONLY,
+    PAGE_READWRITE, PAGE_WRITECOPY,
 };
 
 use core::mem::{size_of, size_of_val};
@@ -231,9 +233,22 @@ impl Process for WindowsProcess {
                 continue;
             }
 
-            let range = MemData(
+            let page_type = PageType::empty();
+
+            let page_type = match region.Protect {
+                PAGE_EXECUTE | PAGE_EXECUTE_READ => page_type.noexec(false),
+                PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY => {
+                    page_type.noexec(false).write(true)
+                }
+                PAGE_READWRITE | PAGE_WRITECOPY => page_type.write(true),
+                PAGE_READONLY => page_type.write(false),
+                _ => page_type,
+            };
+
+            let range = CTup3(
                 Address::from(region.BaseAddress as umem),
                 region.RegionSize as _,
+                page_type,
             );
 
             gap_remover.push_range(range);
@@ -242,20 +257,12 @@ impl Process for WindowsProcess {
 }
 
 impl MemoryView for WindowsProcess {
-    fn read_raw_iter<'a>(
-        &mut self,
-        data: CIterator<ReadData<'a>>,
-        out_fail: &mut ReadFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.read_raw_iter(data, out_fail)
+    fn read_raw_iter(&mut self, data: ReadRawMemOps) -> Result<()> {
+        self.virt_mem.read_raw_iter(data)
     }
 
-    fn write_raw_iter<'a>(
-        &mut self,
-        data: CIterator<WriteData<'a>>,
-        out_fail: &mut WriteFailCallback<'_, 'a>,
-    ) -> Result<()> {
-        self.virt_mem.write_raw_iter(data, out_fail)
+    fn write_raw_iter(&mut self, data: WriteRawMemOps) -> Result<()> {
+        self.virt_mem.write_raw_iter(data)
     }
 
     fn metadata(&self) -> MemoryViewMetadata {

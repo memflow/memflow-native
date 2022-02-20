@@ -152,9 +152,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cglue"
-version = "0.2.8"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6504256bcb285d53fd267c524816b219ea8eb4b376f8ddde9297483ed77de78"
+checksum = "15d7ac3d7a04e9aa5fdcd74126bed0217e3b9064dc55883fc1af63caffe07267"
 dependencies = [
  "abi_stable",
  "cglue-macro",
@@ -387,9 +387,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
+checksum = "8c21d40587b92fa6a6c6e3c1bdbf87d75511db5672f9c93175574b3a00df1758"
 dependencies = [
  "ahash",
 ]
@@ -438,9 +438,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.118"
+version = "0.2.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06e509672465a0504304aa87f9f176f2b2b716ed8fb105ebe5c02dc6dce96a94"
+checksum = "1bf2e165bb3457c8e098ea76f3e3bc9db55f87aa90d52d0e6be741470916aaa4"
 
 [[package]]
 name = "libloading"
@@ -478,7 +478,9 @@ checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
 
 [[package]]
 name = "memflow"
-version = "0.2.0-beta1"
+version = "0.2.0-beta2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c85d31f7cf1b56d9f0dd64bf18129aff3c46e5e25ca3195b4671e7016d7160"
 dependencies = [
  "abi_stable",
  "bitflags",
@@ -493,7 +495,7 @@ dependencies = [
  "itertools",
  "libloading",
  "log",
- "memflow-derive 0.2.0-beta1",
+ "memflow-derive",
  "memmap",
  "no-std-compat",
  "once_cell",
@@ -507,20 +509,9 @@ dependencies = [
 
 [[package]]
 name = "memflow-derive"
-version = "0.2.0-beta1"
-dependencies = [
- "darling",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "memflow-derive"
-version = "0.2.0-beta1"
+version = "0.2.0-beta2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b162b846355c1067a2f83fb37e193a441d05d6528e02d9bab658becbb78851fb"
+checksum = "89cf600cdea1effe5c4542d3d75620714e40fa08a331a2d2f33bb2fc9cac5053"
 dependencies = [
  "darling",
  "proc-macro-crate",
@@ -531,14 +522,14 @@ dependencies = [
 
 [[package]]
 name = "memflow-native"
-version = "0.2.0-beta1"
+version = "0.2.0-beta2"
 dependencies = [
  "goblin",
  "itertools",
  "libc",
  "log",
  "memflow",
- "memflow-derive 0.2.0-beta1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "memflow-derive",
  "procfs",
  "windows",
 ]
@@ -703,9 +694,9 @@ dependencies = [
 
 [[package]]
 name = "rangemap"
-version = "0.1.14"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3929836cb64d09ee7deee59635c3d9bffbc1c0373e247efff6272abd62a11baa"
+checksum = "4556ba17699ec8276a2e73e22c5b846666e06fe9db1228a9d4377e67b5d35fcb"
 
 [[package]]
 name = "redox_syscall"
