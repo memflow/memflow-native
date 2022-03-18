@@ -270,6 +270,50 @@ impl<'a> OsInner<'a> for WindowsOs {
         todo!()
     }
 
+    /// Retrieves address of the primary module structure of the process
+    ///
+    /// This will generally be for the initial executable that was run
+    fn primary_module_address(&mut self) -> Result<Address> {
+        Ok(self.module_by_name("ntoskrnl.exe")?.address)
+    }
+
+    /// Retrieves information for the primary module of the process
+    ///
+    /// This will generally be the initial executable that was run
+    fn primary_module(&mut self) -> Result<ModuleInfo> {
+        self.module_by_name("ntoskrnl.exe")
+    }
+
+    /// Retrieves a list of all imports of a given module
+    fn module_import_list_callback(
+        &mut self,
+        _info: &ModuleInfo,
+        _callback: ImportCallback,
+    ) -> Result<()> {
+        //memflow::os::util::module_import_list_callback(&mut self.virt_mem, info, callback)
+        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotImplemented))
+    }
+
+    /// Retrieves a list of all exports of a given module
+    fn module_export_list_callback(
+        &mut self,
+        _info: &ModuleInfo,
+        _callback: ExportCallback,
+    ) -> Result<()> {
+        //memflow::os::util::module_export_list_callback(&mut self.virt_mem, info, callback)
+        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotImplemented))
+    }
+
+    /// Retrieves a list of all sections of a given module
+    fn module_section_list_callback(
+        &mut self,
+        _info: &ModuleInfo,
+        _callback: SectionCallback,
+    ) -> Result<()> {
+        //memflow::os::util::module_section_list_callback(&mut self.virt_mem, info, callback)
+        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotImplemented))
+    }
+
     /// Retrieves the OS info
     fn info(&self) -> &OsInfo {
         &self.info
