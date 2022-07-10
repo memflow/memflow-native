@@ -5,7 +5,7 @@ use memflow::types::util::GapRemover;
 
 use super::{conv_err, ProcessVirtualMemory};
 
-use windows::Win32::Foundation::{HINSTANCE, PSTR};
+use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::ProcessStatus::{
     K32EnumProcessModulesEx, K32GetModuleFileNameExA, K32GetModuleInformation, LIST_MODULES_32BIT,
     LIST_MODULES_64BIT,
@@ -63,7 +63,7 @@ impl Process for WindowsProcess {
 
         for f in IntoIterator::into_iter(filter_flags).flatten() {
             self.cached_modules.clear();
-            self.cached_modules.resize(1024, 0);
+            self.cached_modules.resize(1024, HINSTANCE(0));
 
             let mut needed = 0;
 
@@ -86,10 +86,11 @@ impl Process for WindowsProcess {
                     break;
                 }
 
-                self.cached_modules.resize(self.cached_modules.len() * 2, 0);
+                self.cached_modules
+                    .resize(self.cached_modules.len() * 2, HINSTANCE(0));
             }
 
-            self.cached_modules.resize(needed as _, 0);
+            self.cached_modules.resize(needed as _, HINSTANCE(0));
 
             // TODO: ARM STUFF
             let arch = match f {
@@ -99,7 +100,7 @@ impl Process for WindowsProcess {
             };
 
             callback.extend(self.cached_modules.iter().map(|&m| ModuleAddressInfo {
-                address: Address::from(m as umem),
+                address: Address::from(m.0 as umem),
                 arch,
             }));
         }
@@ -122,9 +123,8 @@ impl Process for WindowsProcess {
         if unsafe {
             K32GetModuleFileNameExA(
                 **self.virt_mem.handle,
-                address.to_umem() as HINSTANCE,
-                PSTR(path.as_mut_ptr() as *mut _),
-                path.len() as _,
+                HINSTANCE(address.to_umem() as isize),
+                &mut path,
             )
         } == 0
         {
@@ -136,7 +136,7 @@ impl Process for WindowsProcess {
         unsafe {
             K32GetModuleInformation(
                 **self.virt_mem.handle,
-                address.to_umem() as HINSTANCE,
+                HINSTANCE(address.to_umem() as isize),
                 &mut info,
                 size_of_val(&info) as _,
             )

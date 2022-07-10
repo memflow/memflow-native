@@ -23,7 +23,6 @@ impl ProcessVirtualMemory {
                 info.pid as _,
             )
         }
-        .ok()
         .map_err(conv_err)
         .map(Handle::from)?
         .into();

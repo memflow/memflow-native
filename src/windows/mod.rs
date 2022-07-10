@@ -1,7 +1,8 @@
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, PSTR};
+use windows::core::PCSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -68,8 +69,8 @@ unsafe fn enable_debug_privilege() -> Result<()> {
     let mut se_debug_name = *b"SeDebugPrivilege\0";
 
     LookupPrivilegeValueA(
-        PSTR(core::ptr::null_mut()),
-        PSTR(se_debug_name.as_mut_ptr()),
+        PCSTR(core::ptr::null_mut()),
+        PCSTR(se_debug_name.as_mut_ptr()),
         &mut luid,
     )
     .ok()
@@ -148,11 +149,8 @@ impl<'a> OsInner<'a> for WindowsOs {
     ///
     /// The callback is fully opaque. We need this style so that C FFI can work seamlessly.
     fn process_address_list_callback(&mut self, callback: AddressCallback) -> Result<()> {
-        let handle = Handle(
-            unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
-                .ok()
-                .map_err(conv_err)?,
-        );
+        let handle =
+            Handle(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(conv_err)?);
 
         let mut maybe_entry = MaybeUninit::<PROCESSENTRY32W>::uninit();
 
