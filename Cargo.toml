@@ -16,13 +16,13 @@ memflow-derive = { version = "^0.2.0-beta" }
 log = "0.4"
 libc = { version = "0.2.90" }
 itertools = "0.10"
-goblin = "0.4"
+goblin = "^0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.9", features = ["backtrace"] }
+procfs = { version = "^0.13", features = ["backtrace"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.29", features = [
+windows = { version = "^0.38", features = [
 	"Win32_Foundation",
 	"Win32_System_Diagnostics_ToolHelp",
 	"Win32_System_Diagnostics_Debug",

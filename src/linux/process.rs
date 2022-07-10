@@ -10,13 +10,24 @@ use procfs::process::MMapPath;
 
 use itertools::Itertools;
 
-#[derive(Clone)]
 pub struct LinuxProcess {
     virt_mem: ProcessVirtualMemory,
     proc: procfs::process::Process,
     info: ProcessInfo,
     cached_maps: Vec<procfs::process::MemoryMap>,
     cached_module_maps: Vec<procfs::process::MemoryMap>,
+}
+
+impl Clone for LinuxProcess {
+    fn clone(&self) -> Self {
+        Self {
+            virt_mem: self.virt_mem.clone(),
+            proc: procfs::process::Process::new(self.proc.pid()).unwrap(),
+            info: self.info.clone(),
+            cached_maps: self.cached_maps.clone(),
+            cached_module_maps: self.cached_module_maps.clone(),
+        }
+    }
 }
 
 impl LinuxProcess {
@@ -46,6 +57,7 @@ impl LinuxProcess {
             MMapPath::Vvar => "[vvar]".into(),
             MMapPath::Vsyscall => "[vsyscall]".into(),
             MMapPath::Anonymous => "[anonymous]".into(),
+            MMapPath::Vsys(_) => "[vsys]".into(),
             MMapPath::Other(s) => s.as_str().into(),
         }
     }
@@ -60,6 +72,7 @@ impl LinuxProcess {
             MMapPath::Vvar => "[vvar]".into(),
             MMapPath::Vsyscall => "[vsyscall]".into(),
             MMapPath::Anonymous => "[anonymous]".into(),
+            MMapPath::Vsys(_) => "[vsys]".into(),
             MMapPath::Other(s) => s.as_str().into(),
         }
     }

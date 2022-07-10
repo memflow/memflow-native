@@ -62,7 +62,7 @@ impl<'a> OsInner<'a> for LinuxOs {
                 Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir)
             })?
             .into_iter()
-            .map(|p| p.pid() as usize)
+            .filter_map(|p| p.map(|p| p.pid() as usize).ok())
             .map(Address::from)
             .take_while(|a| callback.call(*a))
             .for_each(|_| {});
