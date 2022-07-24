@@ -89,11 +89,10 @@ impl<'a> OsInner<'a> for LinuxOs {
         let path = proc
             .cmdline()
             .ok()
-            .map(|l| {
+            .and_then(|l| {
                 l.get(0)
                     .map(|s| s.split('\0').next().unwrap_or("").to_string())
             })
-            .flatten()
             .unwrap_or_else(|| {
                 proc.status()
                     .ok()

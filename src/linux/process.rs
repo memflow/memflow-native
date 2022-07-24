@@ -46,8 +46,7 @@ impl LinuxProcess {
         match path {
             MMapPath::Path(buf) => buf
                 .file_name()
-                .map(|o| o.to_str())
-                .flatten()
+                .and_then(|o| o.to_str())
                 .unwrap_or("unknown")
                 .into(),
             MMapPath::Heap => "[heap]".into(),
@@ -237,8 +236,8 @@ impl Process for LinuxProcess {
                         Address::from(map.address.0),
                         (map.address.1 - map.address.0) as umem,
                         PageType::empty()
-                            .noexec(!map.perms.contains("x"))
-                            .write(map.perms.contains("w")),
+                            .noexec(!map.perms.contains('x'))
+                            .write(map.perms.contains('w')),
                     )
                 })
                 .map(|(s, sz, perms)| {

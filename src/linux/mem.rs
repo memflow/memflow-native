@@ -24,12 +24,10 @@ impl ProcessVirtualMemory {
         Self {
             pid: info.pid as pid_t,
             temp_iov: vec![
-                IoSendVec {
-                    0: iovec {
-                        iov_base: std::ptr::null_mut::<c_void>(),
-                        iov_len: 0
-                    }
-                };
+                IoSendVec(iovec {
+                    iov_base: std::ptr::null_mut::<c_void>(),
+                    iov_len: 0
+                });
                 iov_max * 2
             ]
             .into_boxed_slice(),
@@ -97,7 +95,7 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
 
 impl ProcessVirtualMemory {
     /// Generic read/write implementation for linux.
-    fn process_rw<'a, T: RWSlice>(
+    fn process_rw<T: RWSlice>(
         &mut self,
         MemOps {
             mut inp,
