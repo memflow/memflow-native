@@ -1,6 +1,6 @@
 [package]
 name = "memflow-native"
-version = "0.2.0-beta5"
+version = "0.2.0-beta7"
 authors = ["Aurimas Blažulionis <0x60@pm.me>", "ko1N <ko1N1337@gmail.com>"]
 edition = "2018"
 description = "System call based proxy-OS for memflow"
@@ -11,8 +11,8 @@ license = "MIT"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-memflow = { version = "^0.2.0-beta", features = ["plugins"] }
-memflow-derive = { version = "^0.2.0-beta" }
+memflow = { version = "^0.2.0-beta7", features = ["plugins"] }
+#memflow = { path = "../memflow/memflow", features = ["plugins"] }
 log = "0.4"
 libc = { version = "0.2.90" }
 itertools = "0.10"

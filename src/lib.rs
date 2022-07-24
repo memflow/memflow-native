@@ -13,12 +13,11 @@ use memflow::prelude::v1::*;
 
 cglue_impl_group!(NativeOs, OsInstance, {});
 
-#[cfg_attr(feature = "plugins", os_layer_bare(name = "native"))]
-pub fn build_os(
+#[cfg_attr(feature = "plugins", os(name = "native", return_wrapped = true))]
+pub fn create_os(
     args: &OsArgs,
-    _: Option<ConnectorInstanceArcBox<'static>>,
     lib: LibArc,
 ) -> Result<OsInstanceArcBox<'static>> {
-    log::info!("Initialize native OS!");
-    Ok(group_obj!((NativeOs::new(args)?, lib) as OsInstance))
+    let os = NativeOs::new(args)?;
+    Ok(memflow::plugins::os::create_instance(os, lib, args))
 }
