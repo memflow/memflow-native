@@ -7,7 +7,9 @@ use std::sync::Arc;
 use super::{conv_err, Handle};
 
 use windows::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+};
 
 #[derive(Clone)]
 pub struct ProcessVirtualMemory {
@@ -18,7 +20,7 @@ impl ProcessVirtualMemory {
     pub fn try_new(info: &ProcessInfo) -> Result<Self> {
         let handle: Arc<Handle> = unsafe {
             OpenProcess(
-                PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+                PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
                 false,
                 info.pid as _,
             )
