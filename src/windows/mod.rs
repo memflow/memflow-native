@@ -87,10 +87,10 @@ unsafe fn enable_debug_privilege() -> Result<()> {
     AdjustTokenPrivileges(
         token,
         false,
-        &new_privileges,
+        Some(&new_privileges),
         std::mem::size_of_val(&new_privileges) as _,
-        core::ptr::null_mut(),
-        core::ptr::null_mut(),
+        None,
+        None,
     )
     .ok()
     .map_err(conv_err)
@@ -176,7 +176,7 @@ impl Os for WindowsOs {
                 let path = OsString::from_wide(&p.szExeFile[..len]);
                 let path = path.to_string_lossy();
                 let path = &*path;
-                let name = path.rsplit_once("\\").map(|(_, end)| end).unwrap_or(path);
+                let name = path.rsplit_once('\\').map(|(_, end)| end).unwrap_or(path);
 
                 self.cached_processes.push(ProcessInfo {
                     address,

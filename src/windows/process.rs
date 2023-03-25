@@ -218,7 +218,7 @@ impl Process for WindowsProcess {
         while unsafe {
             VirtualQueryEx(
                 **self.virt_mem.handle,
-                cur_addr.to_umem() as *mut _,
+                Some(cur_addr.to_umem() as *mut _),
                 &mut region,
                 size_of::<MEMORY_BASIC_INFORMATION>(),
             )

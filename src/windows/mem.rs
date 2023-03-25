@@ -66,7 +66,7 @@ impl<'a> RWSlice for CSliceRef<'a, u8> {
         size: usize,
     ) -> Result<usize> {
         let mut written = 0;
-        WriteProcessMemory(**handle, remote as _, local, size, &mut written)
+        WriteProcessMemory(**handle, remote as _, local, size, Some(&mut written))
             .ok()
             .map_err(conv_err)?;
         Ok(written)
@@ -81,7 +81,7 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
         size: usize,
     ) -> Result<usize> {
         let mut written = 0;
-        ReadProcessMemory(**handle, remote, local as _, size, &mut written)
+        ReadProcessMemory(**handle, remote, local as _, size, Some(&mut written))
             .ok()
             .map_err(conv_err)?;
         Ok(written)
@@ -101,7 +101,7 @@ impl ProcessVirtualMemory {
         for CTup3(addr, meta_addr, buf) in inp {
             let written = unsafe {
                 T::do_rw(
-                    &*self.handle,
+                    &self.handle,
                     buf.as_ptr() as _,
                     addr.to_umem() as _,
                     buf.len(),
