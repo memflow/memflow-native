@@ -141,8 +141,8 @@ impl Default for WindowsOs {
     }
 }
 
-impl<'a> OsInner<'a> for WindowsOs {
-    type ProcessType = WindowsProcess;
+impl Os for WindowsOs {
+    type ProcessType<'a> = WindowsProcess;
     type IntoProcessType = WindowsProcess;
 
     /// Walks a process list and calls a callback for each process structure address
@@ -208,7 +208,7 @@ impl<'a> OsInner<'a> for WindowsOs {
     /// Construct a process by its info, borrowing the OS
     ///
     /// It will share the underlying memory resources
-    fn process_by_info(&'a mut self, info: ProcessInfo) -> Result<Self::ProcessType> {
+    fn process_by_info(&mut self, info: ProcessInfo) -> Result<Self::ProcessType<'_>> {
         WindowsProcess::try_new(info)
     }
 
