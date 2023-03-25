@@ -6,7 +6,7 @@ use super::ProcessVirtualMemory;
 
 use libc::pid_t;
 
-use procfs::process::MMapPath;
+use procfs::process::{MMPermissions, MMapExtension, MMapPath};
 
 use itertools::Itertools;
 
@@ -55,6 +55,7 @@ impl LinuxProcess {
             MMapPath::Vdso => "[vdso]".into(),
             MMapPath::Vvar => "[vvar]".into(),
             MMapPath::Vsyscall => "[vsyscall]".into(),
+            MMapPath::Rollup => "[rollup]".into(),
             MMapPath::Anonymous => "[anonymous]".into(),
             MMapPath::Vsys(_) => "[vsys]".into(),
             MMapPath::Other(s) => s.as_str().into(),
@@ -70,6 +71,7 @@ impl LinuxProcess {
             MMapPath::Vdso => "[vdso]".into(),
             MMapPath::Vvar => "[vvar]".into(),
             MMapPath::Vsyscall => "[vsyscall]".into(),
+            MMapPath::Rollup => "[rollup]".into(),
             MMapPath::Anonymous => "[anonymous]".into(),
             MMapPath::Vsys(_) => "[vsys]".into(),
             MMapPath::Other(s) => s.as_str().into(),
@@ -96,7 +98,8 @@ impl Process for LinuxProcess {
         self.cached_maps = self
             .proc
             .maps()
-            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?;
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
+            .memory_maps;
 
         self.cached_module_maps = self
             .cached_maps
@@ -112,11 +115,12 @@ impl Process for LinuxProcess {
                 {
                     Ok(procfs::process::MemoryMap {
                         address: (m1.address.0, m2.address.1),
-                        perms: String::new(),
+                        perms: MMPermissions::NONE,
                         offset: m1.offset,
                         dev: m1.dev,
                         inode: m1.inode,
                         pathname: m1.pathname,
+                        extension: MMapExtension::default(),
                     })
                 } else {
                     Err((m1, m2))
@@ -127,7 +131,7 @@ impl Process for LinuxProcess {
         self.cached_module_maps
             .iter()
             .enumerate()
-            .filter(|_| target_arch == None || Some(&self.info().sys_arch) == target_arch)
+            .filter(|_| target_arch.is_none() || Some(&self.info().sys_arch) == target_arch)
             .take_while(|(i, _)| {
                 callback.call(ModuleAddressInfo {
                     address: Address::from(*i as u64),
@@ -160,7 +164,7 @@ impl Process for LinuxProcess {
             .map(|map| ModuleInfo {
                 address,
                 parent_process: self.info.address,
-                base: Address::from(map.address.0 as u64),
+                base: Address::from(map.address.0),
                 size: (map.address.1 - map.address.0) as umem,
                 name: Self::mmap_path_to_name_string(&map.pathname),
                 path: Self::mmap_path_to_path_string(&map.pathname),
@@ -223,21 +227,21 @@ impl Process for LinuxProcess {
             .maps()
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))
         {
-            self.cached_maps = maps;
+            self.cached_maps = maps.memory_maps;
 
             self.cached_maps
                 .iter()
                 .filter(|map| {
                     Address::from(map.address.1) > start && Address::from(map.address.0) < end
                 })
-                .filter(|m| !m.perms.starts_with("---"))
+                .filter(|m| m.perms.contains(MMPermissions::READ))
                 .map(|map| {
                     (
                         Address::from(map.address.0),
                         (map.address.1 - map.address.0) as umem,
                         PageType::empty()
-                            .noexec(!map.perms.contains('x'))
-                            .write(map.perms.contains('w')),
+                            .noexec(!map.perms.contains(MMPermissions::EXECUTE))
+                            .write(map.perms.contains(MMPermissions::WRITE)),
                     )
                 })
                 .map(|(s, sz, perms)| {

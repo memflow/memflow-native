@@ -74,6 +74,7 @@ impl<'a> RWSlice for CSliceRef<'a, u8> {
     }
 
     unsafe fn from_iovec(liov: iovec) -> Self {
+        #[allow(clippy::unnecessary_cast)]
         core::slice::from_raw_parts(liov.iov_base as *const _, liov.iov_len as usize).into()
     }
 }
@@ -89,6 +90,7 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
     }
 
     unsafe fn from_iovec(liov: iovec) -> Self {
+        #[allow(clippy::unnecessary_cast)]
         core::slice::from_raw_parts_mut(liov.iov_base as *mut _, liov.iov_len as usize).into()
     }
 }

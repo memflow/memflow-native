@@ -2,6 +2,7 @@ use memflow::os::process::*;
 use memflow::prelude::v1::*;
 
 use libc::pid_t;
+use log::error;
 
 use procfs::KernelModule;
 
@@ -48,8 +49,8 @@ impl Default for LinuxOs {
     }
 }
 
-impl<'a> OsInner<'a> for LinuxOs {
-    type ProcessType = LinuxProcess;
+impl Os for LinuxOs {
+    type ProcessType<'a> = LinuxProcess;
     type IntoProcessType = LinuxProcess;
 
     /// Walks a process list and calls a callback for each process structure address
@@ -58,7 +59,7 @@ impl<'a> OsInner<'a> for LinuxOs {
     fn process_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         procfs::process::all_processes()
             .map_err(|e| {
-                print!("{}", e);
+                error!("{e}");
                 Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir)
             })?
             .into_iter()
@@ -119,7 +120,7 @@ impl<'a> OsInner<'a> for LinuxOs {
     /// Construct a process by its info, borrowing the OS
     ///
     /// It will share the underlying memory resources
-    fn process_by_info(&'a mut self, info: ProcessInfo) -> Result<Self::ProcessType> {
+    fn process_by_info(&mut self, info: ProcessInfo) -> Result<Self::ProcessType<'_>> {
         LinuxProcess::try_new(info)
     }
 
@@ -138,8 +139,7 @@ impl<'a> OsInner<'a> for LinuxOs {
     fn module_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         self.cached_modules = procfs::modules()
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
-            .into_iter()
-            .map(|(_, v)| v)
+            .into_values()
             .collect();
 
         (0..self.cached_modules.len())
