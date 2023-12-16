@@ -215,6 +215,12 @@ impl Process for LinuxProcess {
         ProcessState::Unknown
     }
 
+    /// Changes the dtb this process uses for memory translations.
+    /// This function serves no purpose in memflow-native.
+    fn set_dtb(&mut self, _dtb1: Address, _dtb2: Address) -> Result<()> {
+        Ok(())
+    }
+
     fn mapped_mem_range(
         &mut self,
         gap_size: imem,

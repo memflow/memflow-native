@@ -62,7 +62,6 @@ impl Os for LinuxOs {
                 error!("{e}");
                 Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir)
             })?
-            .into_iter()
             .filter_map(|p| p.map(|p| p.pid() as usize).ok())
             .map(Address::from)
             .take_while(|a| callback.call(*a))
@@ -114,6 +113,9 @@ impl Os for LinuxOs {
             sys_arch: ArchitectureIdent::X86(64, false),
             proc_arch: ArchitectureIdent::X86(64, false),
             state: ProcessState::Alive,
+            // dtb is not known/used here
+            dtb1: Address::invalid(),
+            dtb2: Address::invalid(),
         })
     }
 
