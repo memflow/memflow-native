@@ -67,7 +67,6 @@ impl<'a> RWSlice for CSliceRef<'a, u8> {
     ) -> Result<usize> {
         let mut written = 0;
         WriteProcessMemory(**handle, remote as _, local, size, Some(&mut written))
-            .ok()
             .map_err(conv_err)?;
         Ok(written)
     }
@@ -82,7 +81,6 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
     ) -> Result<usize> {
         let mut written = 0;
         ReadProcessMemory(**handle, remote, local as _, size, Some(&mut written))
-            .ok()
             .map_err(conv_err)?;
         Ok(written)
     }

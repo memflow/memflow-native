@@ -46,7 +46,7 @@ impl core::ops::Deref for Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.0) };
+        unsafe { CloseHandle(self.0) }.ok();
     }
 }
 
@@ -60,9 +60,7 @@ unsafe fn enable_debug_privilege() -> Result<()> {
     let process = GetCurrentProcess();
     let mut token = HANDLE(0);
 
-    OpenProcessToken(process, TOKEN_ADJUST_PRIVILEGES, &mut token)
-        .ok()
-        .map_err(conv_err)?;
+    OpenProcessToken(process, TOKEN_ADJUST_PRIVILEGES, &mut token).map_err(conv_err)?;
 
     let mut luid = Default::default();
 
@@ -73,7 +71,6 @@ unsafe fn enable_debug_privilege() -> Result<()> {
         PCSTR(se_debug_name.as_mut_ptr()),
         &mut luid,
     )
-    .ok()
     .map_err(conv_err)?;
 
     let new_privileges = TOKEN_PRIVILEGES {
@@ -92,7 +89,6 @@ unsafe fn enable_debug_privilege() -> Result<()> {
         None,
         None,
     )
-    .ok()
     .map_err(conv_err)
 }
 
@@ -167,7 +163,7 @@ impl Os for WindowsOs {
             .chain(std::iter::repeat_with(|| unsafe {
                 Process32NextW(*handle, ptr)
             }))
-            .take_while(|b| b.as_bool())
+            .take_while(|b| b.is_ok())
             .map(|_| unsafe { maybe_entry.assume_init() })
             .map(|p| {
                 let address = Address::from(p.th32ProcessID as umem);

@@ -1,11 +1,11 @@
 use memflow::cglue;
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
-use memflow::types::util::GapRemover;
+use memflow::types::gap_remover::GapRemover;
 
 use super::{conv_err, ProcessVirtualMemory};
 
-use windows::Win32::Foundation::HINSTANCE;
+use windows::Win32::Foundation::{HINSTANCE, HMODULE};
 use windows::Win32::System::ProcessStatus::{
     K32EnumProcessModulesEx, K32GetModuleFileNameExA, K32GetModuleInformation, LIST_MODULES_32BIT,
     LIST_MODULES_64BIT,
@@ -23,7 +23,7 @@ use core::mem::{size_of, size_of_val};
 pub struct WindowsProcess {
     virt_mem: ProcessVirtualMemory,
     info: ProcessInfo,
-    cached_modules: Vec<HINSTANCE>,
+    cached_modules: Vec<HMODULE>,
 }
 
 impl WindowsProcess {
@@ -63,7 +63,7 @@ impl Process for WindowsProcess {
 
         for f in IntoIterator::into_iter(filter_flags).flatten() {
             self.cached_modules.clear();
-            self.cached_modules.resize(1024, HINSTANCE(0));
+            self.cached_modules.resize(1024, HMODULE(0));
 
             let mut needed = 0;
 
@@ -72,9 +72,9 @@ impl Process for WindowsProcess {
                     K32EnumProcessModulesEx(
                         **self.virt_mem.handle,
                         self.cached_modules.as_mut_ptr(),
-                        (self.cached_modules.len() * size_of::<HINSTANCE>()) as _,
+                        (self.cached_modules.len() * size_of::<HMODULE>()) as _,
                         &mut needed,
-                        f,
+                        f.0,
                     )
                     .ok()
                     .map_err(conv_err)?
@@ -87,10 +87,10 @@ impl Process for WindowsProcess {
                 }
 
                 self.cached_modules
-                    .resize(self.cached_modules.len() * 2, HINSTANCE(0));
+                    .resize(self.cached_modules.len() * 2, HMODULE(0));
             }
 
-            self.cached_modules.resize(needed as _, HINSTANCE(0));
+            self.cached_modules.resize(needed as _, HMODULE(0));
 
             // TODO: ARM STUFF
             let arch = match f {
