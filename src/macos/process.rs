@@ -1,12 +1,13 @@
 use memflow::cglue;
 use memflow::os::process::*;
 use memflow::prelude::v1::*;
+use memflow::types::size;
 
 use super::ProcessVirtualMemory;
 
 use libc::{
-    natural_t, proc_pidinfo, task_info, vnode_info_path, KERN_SUCCESS, VM_PROT_EXECUTE,
-    VM_PROT_READ, VM_PROT_WRITE,
+    natural_t, proc_pidinfo, task_info, vnode_info_path, KERN_SUCCESS, LC_SEGMENT, LC_SEGMENT_64,
+    VM_PROT_EXECUTE, VM_PROT_READ, VM_PROT_WRITE,
 };
 use mach2::task_info::{task_dyld_info, TASK_DYLD_INFO};
 
@@ -66,6 +67,34 @@ struct dyld_image_info {
     image_load_address: usize,
     image_file_path: usize,
     image_file_mod_date: usize,
+}
+
+#[repr(C)]
+#[derive(Pod, Default, Clone, Copy)]
+pub struct MachoHeader {
+    pub magic: u32,
+    pub cputype: u32,
+    pub cpusubtype: u32,
+    pub filetype: u32,
+    pub ncmds: u32,
+    pub sizeofcmds: u32,
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Pod, Default, Clone, Copy)]
+pub struct MachoLoadCommand {
+    pub ty: u32,
+    pub sz: u32,
+}
+
+#[repr(C)]
+#[derive(Pod, Default, Clone, Copy, Debug)]
+pub struct MachoLcSegmentShared {
+    pub maxprot: u32,
+    pub initprot: u32,
+    pub nsects: u32,
+    pub flags: u32,
 }
 
 pub struct MacProcess {
@@ -194,8 +223,79 @@ impl MacProcess {
                     last_ino = ino;
                 }
 
-                self.cached_module_maps
-                    .push((start, (end - start) as _, name));
+                let mut mod_sz = (end - start) as umem;
+
+                // FIXME: figure out a way without parsing the mach file...
+                let _ = (|| {
+                    let header = self.read::<MachoHeader>(start)?;
+
+                    if header.sizeofcmds as usize > size::mb(16) {
+                        return Err(ErrorKind::Unknown.into());
+                    }
+
+                    let cmdaddr = start
+                        + core::mem::size_of::<MachoHeader>()
+                        + if header.magic == 0xfeedfacf {
+                            4
+                        } else if header.magic == 0xfeedface {
+                            0
+                        } else {
+                            return Err(ErrorKind::Unknown.into());
+                        };
+
+                    let mut cmds = vec![0; header.sizeofcmds as usize];
+
+                    self.read_raw_into(cmdaddr, &mut cmds[..])?;
+
+                    let view = DataView::from(&cmds[..]);
+
+                    let mut cmdoff = 0;
+
+                    let mut base_addr = None;
+                    let mut all_seg_sz = 0;
+
+                    for _ in 0..header.ncmds {
+                        let hdr = view.read::<MachoLoadCommand>(cmdoff);
+
+                        if let Some((addr, sz, seg)) = if hdr.ty == LC_SEGMENT {
+                            let addr = view.read::<u32>(cmdoff + 24);
+                            let sz = view.read::<u32>(cmdoff + 24 + 4);
+                            Some((
+                                addr as umem,
+                                sz as umem,
+                                view.read::<MachoLcSegmentShared>(cmdoff + 24 + 16),
+                            ))
+                        } else if hdr.ty == LC_SEGMENT_64 {
+                            let addr = view.read::<u64>(cmdoff + 24);
+                            let sz = view.read::<u64>(cmdoff + 24 + 8);
+                            Some((
+                                addr as umem,
+                                sz as umem,
+                                view.read::<MachoLcSegmentShared>(cmdoff + 24 + 32),
+                            ))
+                        } else {
+                            None
+                        } {
+                            // Skip __PAGEZERO segment that has no sections
+                            // TODO: should we also check for protection flags?
+                            if seg.nsects != 0 {
+                                if base_addr.is_none() {
+                                    base_addr = Some(addr);
+                                }
+                                all_seg_sz =
+                                    core::cmp::max(all_seg_sz, addr - base_addr.unwrap() + sz);
+                            }
+                        }
+
+                        cmdoff += hdr.sz as usize;
+                    }
+
+                    mod_sz = core::cmp::max(all_seg_sz, mod_sz);
+
+                    Result::Ok(())
+                })();
+
+                self.cached_module_maps.push((start, mod_sz, name));
             }
         }
 
@@ -338,14 +438,23 @@ impl Process for MacProcess {
 
         self.cached_module_maps
             .get(address.to_umem() as usize)
-            .map(|map| ModuleInfo {
-                address,
-                parent_process: self.info.address,
-                base: map.0,
-                size: map.1,
-                name: map.2.as_str().into(),
-                path: map.2.as_str().into(),
-                arch: self.info.sys_arch,
+            .map(|map| {
+                let path = map.2.as_str();
+
+                ModuleInfo {
+                    address,
+                    parent_process: self.info.address,
+                    base: map.0,
+                    size: map.1,
+                    name: path
+                        .rsplit_once('/')
+                        .or_else(|| path.rsplit_once('\\'))
+                        .map(|v| v.1)
+                        .unwrap_or(path)
+                        .into(),
+                    path: path.into(),
+                    arch: self.info.sys_arch,
+                }
             })
             .ok_or(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound))
     }
