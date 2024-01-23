@@ -26,6 +26,9 @@ use mem::ProcessVirtualMemory;
 pub mod process;
 use process::WindowsProcess;
 
+pub mod keyboard;
+use keyboard::WindowsKeyboard;
+
 struct KernelModule {}
 
 pub(crate) struct Handle(HANDLE);
@@ -314,5 +317,18 @@ impl Os for WindowsOs {
     /// Retrieves the OS info
     fn info(&self) -> &OsInfo {
         &self.info
+    }
+}
+
+impl OsKeyboard for WindowsOs {
+    type KeyboardType<'a> = WindowsKeyboard;
+    type IntoKeyboardType = WindowsKeyboard;
+
+    fn keyboard(&mut self) -> memflow::error::Result<Self::KeyboardType<'_>> {
+        Ok(WindowsKeyboard::new())
+    }
+
+    fn into_keyboard(self) -> memflow::error::Result<Self::IntoKeyboardType> {
+        Ok(WindowsKeyboard::new())
     }
 }

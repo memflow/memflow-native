@@ -12,10 +12,15 @@ pub use macos::MacOs as NativeOs;
 mod windows;
 #[cfg(target_os = "windows")]
 pub use self::windows::WindowsOs as NativeOs;
+#[cfg(target_os = "windows")]
+use crate::keyboard::OsKeyboardVtbl;
 
 use memflow::cglue;
 use memflow::prelude::v1::*;
 
+#[cfg(target_os = "windows")]
+cglue_impl_group!(NativeOs, OsInstance, { OsKeyboard });
+#[cfg(not(target_os = "windows"))]
 cglue_impl_group!(NativeOs, OsInstance, {});
 
 #[cfg_attr(feature = "plugins", os(name = "native", return_wrapped = true))]
