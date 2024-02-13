@@ -9,35 +9,37 @@ readme = "README.md"
 homepage = "https://memflow.io"
 repository = "https://github.com/memflow/memflow-native"
 license = "MIT"
-keywords = [ "memflow", "introspection", "memory", "dma" ]
-categories = [ "api-bindings", "memory-management", "os" ]
+keywords = ["memflow", "introspection", "memory", "dma"]
+categories = ["api-bindings", "memory-management", "os"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-memflow = { version = "0.2", features = ["plugins", "goblin"] }
-log = "0.4"
-libc = { version = "0.2.90" }
+goblin = "0.8"
 itertools = "0.12"
-goblin = "0.7"
+libc = { version = "0.2.90" }
+log = "0.4"
+memflow = { version = "0.2", features = ["plugins", "goblin"] }
 
 # we keep procfs on version 0.15.x because it does not build properly with the backtrace on 0.16.x
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.15", features = ["backtrace"] }
+procfs = { version = "0.16", features = ["backtrace"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "^0.52.0", features = [
+	"Wdk_System_Threading",
 	"Win32_Foundation",
-	"Win32_System_Diagnostics_ToolHelp",
-	"Win32_System_Diagnostics_Debug",
-	"Win32_System_Threading",
-	"Win32_System_ProcessStatus",
 	"Win32_Security",
+	"Win32_System_Diagnostics_Debug",
+	"Win32_System_Diagnostics_ToolHelp",
+	"Win32_System_Kernel",
 	"Win32_System_Memory",
+	"Win32_System_ProcessStatus",
+	"Win32_System_Threading",
 	"Win32_UI",
 	"Win32_UI_Input",
-	"Win32_UI_Input_KeyboardAndMouse"
+	"Win32_UI_Input_KeyboardAndMouse",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

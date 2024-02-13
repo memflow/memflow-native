@@ -5,11 +5,8 @@ use memflow::types::gap_remover::GapRemover;
 
 use super::{conv_err, ProcessVirtualMemory};
 
+use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
 use windows::Win32::Foundation::{HINSTANCE, HMODULE};
-use windows::Win32::System::ProcessStatus::{
-    K32EnumProcessModulesEx, K32GetModuleFileNameExA, K32GetModuleInformation, LIST_MODULES_32BIT,
-    LIST_MODULES_64BIT,
-};
 
 use windows::Win32::System::Memory::{
     VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_FREE, MEM_RESERVE, PAGE_EXECUTE,
@@ -17,7 +14,15 @@ use windows::Win32::System::Memory::{
     PAGE_READWRITE, PAGE_WRITECOPY,
 };
 
+use windows::Win32::System::ProcessStatus::{
+    K32EnumProcessModulesEx, K32GetModuleFileNameExA, K32GetModuleInformation, LIST_MODULES_32BIT,
+    LIST_MODULES_64BIT,
+};
+
+use windows::Win32::System::Threading::PROCESS_BASIC_INFORMATION;
+
 use core::mem::{size_of, size_of_val};
+use core::ptr;
 
 #[derive(Clone)]
 pub struct WindowsProcess {
@@ -40,6 +45,17 @@ cglue_impl_group!(WindowsProcess, ProcessInstance, {});
 cglue_impl_group!(WindowsProcess, IntoProcessInstance, {});
 
 impl Process for WindowsProcess {
+    /// Retrieves the state of the process
+    fn state(&mut self) -> ProcessState {
+        ProcessState::Unknown
+    }
+
+    /// Changes the dtb this process uses for memory translations.
+    /// This function serves no purpose in memflow-native.
+    fn set_dtb(&mut self, _dtb1: Address, _dtb2: Address) -> Result<()> {
+        Ok(())
+    }
+
     /// Walks the process' module list and calls the provided callback for each module structure
     /// address
     ///
@@ -160,6 +176,31 @@ impl Process for WindowsProcess {
         })
     }
 
+    /// Retrieves address of the primary module structure of the process
+    ///
+    /// This will generally be for the initial executable that was run
+    fn primary_module_address(&mut self) -> Result<Address> {
+        let mut info = PROCESS_BASIC_INFORMATION::default();
+
+        unsafe {
+            NtQueryInformationProcess(
+                **self.virt_mem.handle,
+                ProcessBasicInformation,
+                &mut info as *mut _ as _,
+                size_of_val(&info) as _,
+                ptr::null_mut(),
+            )
+        }
+        .ok()
+        .map_err(conv_err)?;
+
+        // 0x10 is the offset of the `ImageBaseAddress` field in the PEB structure
+        let image_base_address: u64 =
+            self.read(Address::from(info.PebBaseAddress as umem + 0x10))?;
+
+        Ok(image_base_address.into())
+    }
+
     fn module_import_list_callback(
         &mut self,
         info: &ModuleInfo,
@@ -184,28 +225,9 @@ impl Process for WindowsProcess {
         memflow::os::util::module_section_list_callback(&mut self.virt_mem, info, callback)
     }
 
-    /// Retrieves address of the primary module structure of the process
-    ///
-    /// This will generally be for the initial executable that was run
-    fn primary_module_address(&mut self) -> Result<Address> {
-        // TODO: Is it always 0th mod?
-        Ok(Address::from(0))
-    }
-
     /// Retrieves the process info
     fn info(&self) -> &ProcessInfo {
         &self.info
-    }
-
-    /// Retrieves the state of the process
-    fn state(&mut self) -> ProcessState {
-        ProcessState::Unknown
-    }
-
-    /// Changes the dtb this process uses for memory translations.
-    /// This function serves no purpose in memflow-native.
-    fn set_dtb(&mut self, _dtb1: Address, _dtb2: Address) -> Result<()> {
-        Ok(())
     }
 
     fn mapped_mem_range(
