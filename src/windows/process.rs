@@ -194,11 +194,9 @@ impl Process for WindowsProcess {
         .ok()
         .map_err(conv_err)?;
 
-        // 0x10 is the offset of the `ImageBaseAddress` field in the PEB structure
-        let image_base_address: u64 =
-            self.read(Address::from(info.PebBaseAddress as umem + 0x10))?;
-
-        Ok(image_base_address.into())
+        // 0x10 is the offset of the `ImageBaseAddress` field in the `PEB64` structure
+        self.read_addr64(Address::from(info.PebBaseAddress as umem + 0x10))
+            .data_part()
     }
 
     fn module_import_list_callback(
