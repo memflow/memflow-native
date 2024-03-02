@@ -227,12 +227,6 @@ impl Os for WindowsOs {
     /// # Arguments
     /// * `callback` - where to pass each matching module to. This is an opaque callback.
     fn module_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
-        /*self.cached_modules = procfs::modules()
-        .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();*/
-
         (0..self.cached_modules.len())
             .map(Address::from)
             .take_while(|a| callback.call(*a))

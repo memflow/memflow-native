@@ -6,7 +6,7 @@ use memflow::types::gap_remover::GapRemover;
 use super::{conv_err, ProcessVirtualMemory};
 
 use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
-use windows::Win32::Foundation::{HINSTANCE, HMODULE};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, STILL_ACTIVE};
 
 use windows::Win32::System::Memory::{
     VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_FREE, MEM_RESERVE, PAGE_EXECUTE,
@@ -47,7 +47,28 @@ cglue_impl_group!(WindowsProcess, IntoProcessInstance, {});
 impl Process for WindowsProcess {
     /// Retrieves the state of the process
     fn state(&mut self) -> ProcessState {
-        ProcessState::Unknown
+        let mut info = PROCESS_BASIC_INFORMATION::default();
+
+        if unsafe {
+            NtQueryInformationProcess(
+                **self.virt_mem.handle,
+                ProcessBasicInformation,
+                &mut info as *mut _ as _,
+                size_of_val(&info) as _,
+                ptr::null_mut(),
+            )
+        }
+        .ok()
+        .is_err()
+        {
+            return ProcessState::Unknown;
+        }
+
+        if info.ExitStatus == STILL_ACTIVE {
+            ProcessState::Alive
+        } else {
+            ProcessState::Dead(info.ExitStatus.0)
+        }
     }
 
     /// Changes the dtb this process uses for memory translations.
