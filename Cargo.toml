@@ -24,7 +24,7 @@ memflow = { version = "0.2", features = ["plugins", "goblin"] }
 
 # we keep procfs on version 0.15.x because it does not build properly with the backtrace on 0.16.x
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.16", features = ["backtrace"] }
+procfs = { version = "0.15", features = ["backtrace"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.54.0", features = [
