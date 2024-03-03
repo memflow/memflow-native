@@ -539,23 +539,12 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "goblin"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f27c1b4369c2cd341b5de549380158b105a04c331be5db9110eef7b6d2742134"
-dependencies = [
- "log",
- "plain",
- "scroll 0.11.0",
-]
-
-[[package]]
-name = "goblin"
 version = "0.8.0"
-source = "git+https://github.com/h33p/goblin?branch=lossy-macho#a4ab3c09f4cd6574a8e204343b98986c5c957c5d"
+source = "git+https://github.com/h33p/goblin?branch=lossy-macho#402c6e64013ca17bb7925cc56e2170779a40bc37"
 dependencies = [
  "log",
  "plain",
- "scroll 0.12.0",
+ "scroll",
 ]
 
 [[package]]
@@ -812,7 +801,7 @@ dependencies = [
  "dataview 1.0.1",
  "dirs",
  "fixed-slice-vec",
- "goblin 0.8.0",
+ "goblin",
  "hashbrown",
  "itertools 0.12.1",
  "libloading 0.8.2",
@@ -846,7 +835,7 @@ dependencies = [
 name = "memflow-native"
 version = "0.2.3"
 dependencies = [
- "goblin 0.7.1",
+ "goblin",
  "itertools 0.12.1",
  "libc",
  "libproc",
@@ -1170,31 +1159,11 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scroll"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04c565b551bafbef4157586fa379538366e4385d42082f255bfd96e4fe8519da"
-dependencies = [
- "scroll_derive 0.11.1",
-]
-
-[[package]]
-name = "scroll"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ab8598aa408498679922eff7fa985c25d58a90771bd6be794434c5277eab1a6"
 dependencies = [
- "scroll_derive 0.12.0",
-]
-
-[[package]]
-name = "scroll_derive"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1db149f81d46d2deba7cd3c50772474707729550221e69588478ebf9ada425ae"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.52",
+ "scroll_derive",
 ]
 
 [[package]]
