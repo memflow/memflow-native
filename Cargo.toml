@@ -16,7 +16,8 @@ categories = ["api-bindings", "memory-management", "os"]
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-goblin = "0.8"
+# we need to keep goblin on 0.7 to stay compatible with the patch below
+goblin = "0.7"
 itertools = "0.12"
 libc = { version = "0.2" }
 log = "0.4"
