@@ -54,3 +54,4 @@ unstable_goblin_lossy_macho = ["memflow/unstable_goblin_lossy_macho"]
 
 [patch.crates-io]
 goblin = { git = "https://github.com/h33p/goblin", branch = "lossy-macho" }
+memflow = { git = "https://github.com/memflow/memflow" }
