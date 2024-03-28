@@ -69,4 +69,4 @@ jobs:
       - name: Upload locally installed plugin
         run: |
           echo "${{ secrets.MEMFLOW_REGISTRY_SIGNING_KEY}}" > ec-secp256k1-priv-key.pem
-          memflowup --skip-version-check push --token ${{ secrets.MEMFLOW_REGISTRY_TOKEN }} --priv-key ec-secp256k1-priv-key.pem coredump:latest
+          memflowup --skip-version-check push --token ${{ secrets.MEMFLOW_REGISTRY_TOKEN }} --priv-key ec-secp256k1-priv-key.pem native:latest
