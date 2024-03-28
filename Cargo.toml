@@ -48,8 +48,8 @@ libproc = "0.14"
 mach2 = "0.4"
 
 [features]
-default = []
-plugins = []
+default = ["plugins"]
+plugins = ["memflow/plugins"]
 unstable_goblin_lossy_macho = ["memflow/unstable_goblin_lossy_macho"]
 
 [patch.crates-io]
