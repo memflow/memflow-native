@@ -165,7 +165,11 @@ impl ProcessVirtualMemory {
                     match vm_err {
                         Some(err) => return Err(Error(ErrorOrigin::OsLayer, err)),
                         _ => {
-                            let mut remaining_written = libcret as usize + 1;
+                            let mut remaining_written = if libcret == -1 {
+                                0
+                            } else {
+                                libcret as usize + 1
+                            };
 
                             for (liof, (_, meta)) in iov_local
                                 .iter()
