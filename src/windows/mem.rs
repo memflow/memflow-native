@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::{conv_err, Handle};
 
+use windows::core::HRESULT;
 use windows::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
@@ -80,9 +81,12 @@ impl<'a> RWSlice for CSliceMut<'a, u8> {
         size: usize,
     ) -> Result<usize> {
         let mut written = 0;
-        ReadProcessMemory(**handle, remote, local as _, size, Some(&mut written))
-            .map_err(conv_err)?;
-        Ok(written)
+
+        match ReadProcessMemory(**handle, remote, local as _, size, Some(&mut written)) {
+            Ok(_) => Ok(written),
+            Err(err) if err.code() == HRESULT::from_win32(299) => Ok(written), // ERROR_PARTIAL_COPY
+            Err(err) => Err(conv_err(err)),
+        }
     }
 }
 
