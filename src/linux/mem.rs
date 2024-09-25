@@ -228,8 +228,12 @@ impl MemoryView for ProcessVirtualMemory {
 
     fn metadata(&self) -> MemoryViewMetadata {
         MemoryViewMetadata {
-            arch_bits: if cfg!(pointer_width = "64") { 64 } else { 32 },
-            little_endian: cfg!(target_endianess = "little"),
+            arch_bits: if cfg!(target_pointer_width = "64") {
+                64
+            } else {
+                32
+            },
+            little_endian: cfg!(target_endian = "little"),
             max_address: Address::invalid(),
             readonly: false,
             real_size: 0,

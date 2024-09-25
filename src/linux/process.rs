@@ -88,7 +88,7 @@ impl Process for LinuxProcess {
     ///
     /// # Arguments
     /// * `target_arch` - sets which architecture to retrieve the modules for (if emulated). Choose
-    /// between `Some(ProcessInfo::sys_arch())`, and `Some(ProcessInfo::proc_arch())`. `None` for all.
+    ///   between `Some(ProcessInfo::sys_arch())`, and `Some(ProcessInfo::proc_arch())`. `None` for all.
     /// * `callback` - where to pass each matching module to. This is an opaque callback.
     fn module_address_list_callback(
         &mut self,

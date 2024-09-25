@@ -90,7 +90,7 @@ impl Os for LinuxOs {
             .cmdline()
             .ok()
             .and_then(|l| {
-                l.get(0)
+                l.first()
                     .map(|s| s.split('\0').next().unwrap_or("").to_string())
             })
             .unwrap_or_else(|| {
