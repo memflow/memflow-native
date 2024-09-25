@@ -16,6 +16,8 @@ use windows::Win32::System::Threading::{
 pub struct ProcessVirtualMemory {
     pub(crate) handle: Arc<Handle>,
 }
+unsafe impl Send for ProcessVirtualMemory {}
+unsafe impl Sync for ProcessVirtualMemory {}
 
 impl ProcessVirtualMemory {
     pub fn try_new(info: &ProcessInfo) -> Result<Self> {

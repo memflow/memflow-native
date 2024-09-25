@@ -26,7 +26,7 @@ pub mod mem;
 use mem::ProcessVirtualMemory;
 
 pub mod process;
-use process::MacProcess;
+pub use process::MacProcess;
 
 fn get_arch() -> ArchitectureIdent {
     static ARCH: OnceLock<ArchitectureIdent> = OnceLock::new();

@@ -12,7 +12,7 @@ pub mod mem;
 use mem::ProcessVirtualMemory;
 
 pub mod process;
-use process::LinuxProcess;
+pub use process::LinuxProcess;
 
 pub struct LinuxOs {
     info: OsInfo,

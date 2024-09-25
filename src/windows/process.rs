@@ -30,6 +30,8 @@ pub struct WindowsProcess {
     info: ProcessInfo,
     cached_modules: Vec<HMODULE>,
 }
+unsafe impl Send for WindowsProcess {}
+unsafe impl Sync for WindowsProcess {}
 
 impl WindowsProcess {
     pub fn try_new(info: ProcessInfo) -> Result<Self> {
@@ -100,7 +102,7 @@ impl Process for WindowsProcess {
 
         for f in IntoIterator::into_iter(filter_flags).flatten() {
             self.cached_modules.clear();
-            self.cached_modules.resize(1024, HMODULE(0));
+            self.cached_modules.resize(1024, HMODULE::default());
 
             let mut needed = 0;
 
@@ -124,10 +126,10 @@ impl Process for WindowsProcess {
                 }
 
                 self.cached_modules
-                    .resize(self.cached_modules.len() * 2, HMODULE(0));
+                    .resize(self.cached_modules.len() * 2, HMODULE::default());
             }
 
-            self.cached_modules.resize(needed as _, HMODULE(0));
+            self.cached_modules.resize(needed as _, HMODULE::default());
 
             // TODO: ARM STUFF
             let arch = match f {
@@ -160,7 +162,7 @@ impl Process for WindowsProcess {
         if unsafe {
             K32GetModuleFileNameExA(
                 **self.virt_mem.handle,
-                HINSTANCE(address.to_umem() as isize),
+                HINSTANCE(address.to_umem() as _),
                 &mut path,
             )
         } == 0
@@ -173,7 +175,7 @@ impl Process for WindowsProcess {
         unsafe {
             K32GetModuleInformation(
                 **self.virt_mem.handle,
-                HINSTANCE(address.to_umem() as isize),
+                HINSTANCE(address.to_umem() as _),
                 &mut info,
                 size_of_val(&info) as _,
             )

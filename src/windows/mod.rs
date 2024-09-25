@@ -24,10 +24,10 @@ pub mod mem;
 use mem::ProcessVirtualMemory;
 
 pub mod process;
-use process::WindowsProcess;
+pub use process::WindowsProcess;
 
 pub mod keyboard;
-use keyboard::WindowsKeyboard;
+pub use keyboard::{WindowsKeyboard, WindowsKeyboardState};
 
 struct KernelModule {}
 
@@ -61,7 +61,7 @@ pub fn conv_err(_err: windows::core::Error) -> Error {
 
 unsafe fn enable_debug_privilege() -> Result<()> {
     let process = GetCurrentProcess();
-    let mut token = HANDLE(0);
+    let mut token = HANDLE::default();
 
     OpenProcessToken(process, TOKEN_ADJUST_PRIVILEGES, &mut token).map_err(conv_err)?;
 
