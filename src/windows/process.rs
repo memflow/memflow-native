@@ -161,8 +161,8 @@ impl Process for WindowsProcess {
 
         if unsafe {
             K32GetModuleFileNameExA(
-                **self.virt_mem.handle,
-                HINSTANCE(address.to_umem() as _),
+                Some(**self.virt_mem.handle),
+                Some(HMODULE(address.to_umem() as _)),
                 &mut path,
             )
         } == 0
@@ -175,7 +175,7 @@ impl Process for WindowsProcess {
         unsafe {
             K32GetModuleInformation(
                 **self.virt_mem.handle,
-                HINSTANCE(address.to_umem() as _),
+                HMODULE(address.to_umem() as _),
                 &mut info,
                 size_of_val(&info) as _,
             )
