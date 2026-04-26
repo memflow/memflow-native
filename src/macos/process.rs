@@ -16,6 +16,7 @@ const PROC_PIDREGIONPATHINFO: i32 = 8;
 
 use core::mem::MaybeUninit;
 use itertools::Itertools;
+use std::ffi::CStr;
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -116,8 +117,83 @@ impl Clone for MacProcess {
 }
 
 impl MacProcess {
+    /// Fallback module discovery based on `PROC_PIDREGIONPATHINFO`.
+    ///
+    /// This is used when dyld/task-port based module enumeration is unavailable.
+    /// We walk VM regions, keep file-backed entries with absolute paths, and merge
+    /// contiguous regions that resolve to the same path into a single module span.
+    /// The result is best-effort and may be less precise than dyld metadata.
+    fn update_cached_module_maps_from_regions(&mut self) -> Result<()> {
+        log::info!(
+            "Using region-path module fallback for pid {} (dyld/task-port path unavailable)",
+            self.info.pid
+        );
+        self.cached_module_maps.clear();
+
+        let mut start = Address::NULL;
+        let end = Address::invalid();
+        let mut prwpi: proc_regionwithpathinfo = unsafe { MaybeUninit::zeroed().assume_init() };
+
+        while start < end {
+            let size = core::mem::size_of::<proc_regionwithpathinfo>() as _;
+            let ret = unsafe {
+                proc_pidinfo(
+                    self.info.pid as _,
+                    PROC_PIDREGIONPATHINFO,
+                    start.to_umem() as _,
+                    &mut prwpi as *mut proc_regionwithpathinfo as *mut _,
+                    size,
+                )
+            };
+
+            if ret <= 0 {
+                break;
+            }
+            if ret < size {
+                return Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown));
+            }
+
+            let region_start = Address::from(prwpi.prp_prinfo.pri_address);
+            let region_size = prwpi.prp_prinfo.pri_size as umem;
+
+            if region_size == 0 {
+                break;
+            }
+
+            let path = unsafe {
+                CStr::from_ptr(prwpi.prp_vip.vip_path.as_ptr().cast::<libc::c_char>())
+                    .to_string_lossy()
+                    .into_owned()
+            };
+
+            // Only keep concrete filesystem mappings; anonymous/synthetic regions are ignored.
+            if !path.is_empty() && path.starts_with('/') {
+                if let Some(last) = self.cached_module_maps.last_mut() {
+                    // Coalesce neighboring regions for the same file into one stable entry.
+                    if last.2 == path && last.0 + last.1 == region_start {
+                        last.1 += region_size;
+                    } else {
+                        self.cached_module_maps
+                            .push((region_start, region_size, path));
+                    }
+                } else {
+                    self.cached_module_maps
+                        .push((region_start, region_size, path));
+                }
+            }
+
+            start = region_start + region_size;
+        }
+
+        self.cached_module_maps.sort_by_key(|v| v.0);
+
+        Ok(())
+    }
+
     pub fn try_new(info: ProcessInfo) -> Result<Self> {
         Ok(Self {
+            // Do not fail process construction just because task_for_pid is denied.
+            // This keeps name/pid process selection usable for metadata/envar paths.
             virt_mem: ProcessVirtualMemory::try_new(&info).unwrap_or_else(|e| {
                 log::warn!("Unable to get task port for pid {}: {e:?}", info.pid);
                 ProcessVirtualMemory::new_unavailable(info.pid)
@@ -129,178 +205,201 @@ impl MacProcess {
     }
 
     pub fn update_cached_module_maps(&mut self) -> Result<()> {
-        let mut info: task_dyld_info = unsafe { MaybeUninit::zeroed().assume_init() };
+        let dyld_result = (|| {
+            let mut info: task_dyld_info = unsafe { MaybeUninit::zeroed().assume_init() };
 
-        self.cached_module_maps.clear();
+            self.cached_module_maps.clear();
 
-        let mut count =
-            (core::mem::size_of::<task_dyld_info>() / core::mem::size_of::<natural_t>()) as _;
-        let port = self.virt_mem.ensure_port()?;
-        let ret = unsafe {
-            task_info(
-                port,
-                TASK_DYLD_INFO,
-                &mut info as *mut task_dyld_info as *mut _,
-                &mut count,
-            )
-        };
+            let mut count =
+                (core::mem::size_of::<task_dyld_info>() / core::mem::size_of::<natural_t>()) as _;
+            let port = self.virt_mem.ensure_port()?;
+            let ret = unsafe {
+                task_info(
+                    port,
+                    TASK_DYLD_INFO,
+                    &mut info as *mut task_dyld_info as *mut _,
+                    &mut count,
+                )
+            };
 
-        if ret != KERN_SUCCESS {
-            return Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown));
-        }
+            if ret != KERN_SUCCESS {
+                return Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown));
+            }
 
-        // 0 -> 32-bit fmt
-        // 1 -> 64-bit fmt
-        // We need to verify that the format is the same as our native pointer width (usize size),
-        // so that we don't misread nonsense.
-        if 4 * (1 + info.all_image_info_format) as usize != core::mem::size_of::<usize>() {
-            return Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported));
-        }
+            // 0 -> 32-bit fmt
+            // 1 -> 64-bit fmt
+            // We need to verify that the format is the same as our native pointer width (usize size),
+            // so that we don't misread nonsense.
+            if 4 * (1 + info.all_image_info_format) as usize != core::mem::size_of::<usize>() {
+                return Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported));
+            }
 
-        let infos = self.read::<dyld_all_image_infos>(info.all_image_info_addr.into())?;
+            let infos = self.read::<dyld_all_image_infos>(info.all_image_info_addr.into())?;
 
-        let mut left = infos.info_array_count as usize;
-        let mut info_buf = vec![dyld_image_info::default(); core::cmp::min(128, left)];
+            let mut left = infos.info_array_count as usize;
+            let mut info_buf = vec![dyld_image_info::default(); core::cmp::min(128, left)];
 
-        while left > 0 {
-            let pos = infos.info_array_count as usize - left;
+            while left > 0 {
+                let pos = infos.info_array_count as usize - left;
 
-            let size = core::cmp::min(left, info_buf.len());
+                let size = core::cmp::min(left, info_buf.len());
 
-            self.read_into(
-                Address::from(
-                    infos.dyld_image_info + pos * core::mem::size_of::<dyld_image_info>(),
-                ),
-                &mut info_buf[..size],
-            )?;
-            left -= size;
+                self.read_into(
+                    Address::from(
+                        infos.dyld_image_info + pos * core::mem::size_of::<dyld_image_info>(),
+                    ),
+                    &mut info_buf[..size],
+                )?;
+                left -= size;
 
-            // And now, let's process the elements
-            for i in &info_buf[..size] {
-                // TODO: do the string reads concurrently
-                let name = self.read_utf8_lossy(i.image_file_path.into(), 4096)?;
+                // And now, let's process the elements
+                for i in &info_buf[..size] {
+                    // TODO: do the string reads concurrently
+                    let name = self.read_utf8_lossy(i.image_file_path.into(), 4096)?;
 
-                let start = Address::from(i.image_load_address);
-                let mut end = start;
+                    let start = Address::from(i.image_load_address);
+                    let mut end = start;
 
-                // Now, we need to figure out the size of the image. To do this, iterate through
-                // proc_regioninfo and grab all entries with identical (non-zero) inode number.
-                let mut prwpi: proc_regionwithpathinfo =
-                    unsafe { MaybeUninit::zeroed().assume_init() };
-                let mut last_ino = 0;
+                    // Now, we need to figure out the size of the image. To do this, iterate through
+                    // proc_regioninfo and grab all entries with identical (non-zero) inode number.
+                    let mut prwpi: proc_regionwithpathinfo =
+                        unsafe { MaybeUninit::zeroed().assume_init() };
+                    let mut last_ino = 0;
 
-                loop {
-                    let size = core::mem::size_of::<proc_regionwithpathinfo>() as _;
-                    let ret = unsafe {
-                        proc_pidinfo(
-                            self.info.pid as _,
-                            PROC_PIDREGIONPATHINFO,
-                            end.to_umem() as _,
-                            &mut prwpi as *mut proc_regionwithpathinfo as *mut _,
-                            size,
-                        )
-                    };
-
-                    if ret <= 0 {
-                        break;
-                    }
-                    if ret < size {
-                        return Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown));
-                    }
-
-                    let ino = prwpi.prp_vip.vip_vi.vi_stat.vst_ino;
-
-                    // FIXME: if we get ino 0 at the start, this usually indicates that we are
-                    // dealing with a submap - submaps are how dyld's are shared across processes,
-                    // meaning, practically shared libraries from dyld cache will be reported to be
-                    // of size 0.
-                    if ino == 0 || (last_ino != 0 && ino != last_ino) {
-                        break;
-                    }
-
-                    let len = prwpi.prp_prinfo.pri_size as umem;
-                    end = Address::from(prwpi.prp_prinfo.pri_address) + len;
-
-                    last_ino = ino;
-                }
-
-                let mut mod_sz = (end - start) as umem;
-
-                // FIXME: figure out a way without parsing the mach file...
-                let _ = (|| {
-                    let header = self.read::<MachoHeader>(start)?;
-
-                    if header.sizeofcmds as usize > size::mb(16) {
-                        return Err(ErrorKind::Unknown.into());
-                    }
-
-                    let cmdaddr = start
-                        + core::mem::size_of::<MachoHeader>()
-                        + if header.magic == 0xfeedfacf {
-                            4
-                        } else if header.magic == 0xfeedface {
-                            0
-                        } else {
-                            return Err(ErrorKind::Unknown.into());
+                    loop {
+                        let size = core::mem::size_of::<proc_regionwithpathinfo>() as _;
+                        let ret = unsafe {
+                            proc_pidinfo(
+                                self.info.pid as _,
+                                PROC_PIDREGIONPATHINFO,
+                                end.to_umem() as _,
+                                &mut prwpi as *mut proc_regionwithpathinfo as *mut _,
+                                size,
+                            )
                         };
 
-                    let mut cmds = vec![0; header.sizeofcmds as usize];
-
-                    self.read_raw_into(cmdaddr, &mut cmds[..])?;
-
-                    let view = DataView::from(&cmds[..]);
-
-                    let mut cmdoff = 0;
-
-                    let mut base_addr = None;
-                    let mut all_seg_sz = 0;
-
-                    for _ in 0..header.ncmds {
-                        let hdr = view.read::<MachoLoadCommand>(cmdoff);
-
-                        if let Some((addr, sz, seg)) = if hdr.ty == LC_SEGMENT {
-                            let addr = view.read::<u32>(cmdoff + 24);
-                            let sz = view.read::<u32>(cmdoff + 24 + 4);
-                            Some((
-                                addr as umem,
-                                sz as umem,
-                                view.read::<MachoLcSegmentShared>(cmdoff + 24 + 16),
-                            ))
-                        } else if hdr.ty == LC_SEGMENT_64 {
-                            let addr = view.read::<u64>(cmdoff + 24);
-                            let sz = view.read::<u64>(cmdoff + 24 + 8);
-                            Some((
-                                addr as umem,
-                                sz as umem,
-                                view.read::<MachoLcSegmentShared>(cmdoff + 24 + 32),
-                            ))
-                        } else {
-                            None
-                        } {
-                            // Skip __PAGEZERO segment that has no sections
-                            // TODO: should we also check for protection flags?
-                            if seg.nsects != 0 {
-                                if base_addr.is_none() {
-                                    base_addr = Some(addr);
-                                }
-                                all_seg_sz =
-                                    core::cmp::max(all_seg_sz, addr - base_addr.unwrap() + sz);
-                            }
+                        if ret <= 0 {
+                            break;
+                        }
+                        if ret < size {
+                            return Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown));
                         }
 
-                        cmdoff += hdr.sz as usize;
+                        let ino = prwpi.prp_vip.vip_vi.vi_stat.vst_ino;
+
+                        // FIXME: if we get ino 0 at the start, this usually indicates that we are
+                        // dealing with a submap - submaps are how dyld's are shared across processes,
+                        // meaning, practically shared libraries from dyld cache will be reported to be
+                        // of size 0.
+                        if ino == 0 || (last_ino != 0 && ino != last_ino) {
+                            break;
+                        }
+
+                        let len = prwpi.prp_prinfo.pri_size as umem;
+                        end = Address::from(prwpi.prp_prinfo.pri_address) + len;
+
+                        last_ino = ino;
                     }
 
-                    mod_sz = core::cmp::max(all_seg_sz, mod_sz);
+                    let mut mod_sz = (end - start) as umem;
 
-                    Result::Ok(())
-                })();
+                    // FIXME: figure out a way without parsing the mach file...
+                    let _ = (|| {
+                        let header = self.read::<MachoHeader>(start)?;
 
-                self.cached_module_maps.push((start, mod_sz, name));
+                        if header.sizeofcmds as usize > size::mb(16) {
+                            return Err(ErrorKind::Unknown.into());
+                        }
+
+                        let cmdaddr = start
+                            + core::mem::size_of::<MachoHeader>()
+                            + if header.magic == 0xfeedfacf {
+                                4
+                            } else if header.magic == 0xfeedface {
+                                0
+                            } else {
+                                return Err(ErrorKind::Unknown.into());
+                            };
+
+                        let mut cmds = vec![0; header.sizeofcmds as usize];
+
+                        self.read_raw_into(cmdaddr, &mut cmds[..])?;
+
+                        let view = DataView::from(&cmds[..]);
+
+                        let mut cmdoff = 0;
+
+                        let mut base_addr = None;
+                        let mut all_seg_sz = 0;
+
+                        for _ in 0..header.ncmds {
+                            let hdr = view.read::<MachoLoadCommand>(cmdoff);
+
+                            if let Some((addr, sz, seg)) = if hdr.ty == LC_SEGMENT {
+                                let addr = view.read::<u32>(cmdoff + 24);
+                                let sz = view.read::<u32>(cmdoff + 24 + 4);
+                                Some((
+                                    addr as umem,
+                                    sz as umem,
+                                    view.read::<MachoLcSegmentShared>(cmdoff + 24 + 16),
+                                ))
+                            } else if hdr.ty == LC_SEGMENT_64 {
+                                let addr = view.read::<u64>(cmdoff + 24);
+                                let sz = view.read::<u64>(cmdoff + 24 + 8);
+                                Some((
+                                    addr as umem,
+                                    sz as umem,
+                                    view.read::<MachoLcSegmentShared>(cmdoff + 24 + 32),
+                                ))
+                            } else {
+                                None
+                            } {
+                                // Skip __PAGEZERO segment that has no sections
+                                // TODO: should we also check for protection flags?
+                                if seg.nsects != 0 {
+                                    if base_addr.is_none() {
+                                        base_addr = Some(addr);
+                                    }
+                                    all_seg_sz =
+                                        core::cmp::max(all_seg_sz, addr - base_addr.unwrap() + sz);
+                                }
+                            }
+
+                            cmdoff += hdr.sz as usize;
+                        }
+
+                        mod_sz = core::cmp::max(all_seg_sz, mod_sz);
+
+                        Result::Ok(())
+                    })();
+
+                    self.cached_module_maps.push((start, mod_sz, name));
+                }
             }
+
+            self.cached_module_maps.sort_by_key(|v| v.0);
+
+            Ok(())
+        })();
+
+        if dyld_result.is_ok() {
+            return Ok(());
         }
 
-        self.cached_module_maps.sort_by_key(|v| v.0);
+        let dyld_err = dyld_result.err().unwrap();
+        log::warn!(
+            "Falling back to proc region module enumeration for pid {}",
+            self.info.pid
+        );
+        self.update_cached_module_maps_from_regions()?;
+
+        if self.cached_module_maps.is_empty() {
+            log::warn!(
+                "Region-path module fallback produced no modules for pid {}; returning original dyld error",
+                self.info.pid
+            );
+            return Err(dyld_err);
+        }
 
         Ok(())
     }
@@ -383,7 +482,6 @@ impl MacProcess {
         }
 
         self.cached_maps.sort_by_key(|v| v.0);
-
         Ok(())
     }
 }
@@ -550,6 +648,56 @@ impl Process for MacProcess {
             })
             .map(<_>::into)
             .feed_into(out);
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_callback(
+        &mut self,
+        target_arch: Option<&ArchitectureIdent>,
+        mut callback: EnvVarCallback,
+    ) -> Result<()> {
+        if let Some(arch) = target_arch {
+            if *arch != self.info.proc_arch {
+                return Ok(());
+            }
+        }
+
+        let parsed =
+            super::read_procargs2(self.info.pid).and_then(|data| super::parse_procargs2(&data))?;
+
+        for (name, value) in parsed.environ {
+            let info = EnvVarInfo {
+                name: name.into(),
+                value: value.into(),
+                address: memflow::types::Address::from(0),
+                arch: self.info.proc_arch,
+            };
+
+            if !callback.call(info) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn environment_block_address(&mut self, _architecture: ArchitectureIdent) -> Result<Address> {
+        // macOS does not expose a stable public env-block pointer like Windows.
+        // Return a sentinel and enumerate via sysctl in `envar_list_from_address`.
+        Ok(Address::NULL)
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_from_address(
+        &mut self,
+        _env_block: Address,
+        architecture: ArchitectureIdent,
+        callback: EnvVarCallback,
+    ) -> Result<()> {
+        // Same rationale as Linux: we can’t use env_block directly, but we *can*
+        // enumerate via sysctl.
+        self.envar_list_callback(Some(&architecture), callback)
     }
 }
 

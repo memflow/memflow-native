@@ -15,7 +15,9 @@ fn get_task(pid: u32) -> Result<mach_port_t> {
         let mut task = MACH_PORT_NULL;
         let res = task_for_pid(mach_task_self(), pid as i32, &mut task as *mut mach_port_t);
         if res != KERN_SUCCESS {
-            log::error!("Could not get task: {res}");
+            log::warn!(
+                "task_for_pid permission denied/unavailable for pid {pid} (kern_return={res})"
+            );
             Err(Error(ErrorOrigin::OsLayer, ErrorKind::Unknown))
         } else {
             Ok(task)

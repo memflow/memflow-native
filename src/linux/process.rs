@@ -108,6 +108,28 @@ impl LinuxProcess {
             MMapPath::Other(s) => s.as_str().into(),
         }
     }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn collect_envars(&self) -> Result<Vec<EnvVarInfo>> {
+        let path = format!("/proc/{}/environ", self.pid);
+        let data = std::fs::read(path)
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::EnvarNotFound))?;
+
+        let mut out = Vec::new();
+        for entry in data.split(|b| *b == 0).filter(|entry| !entry.is_empty()) {
+            let entry = String::from_utf8_lossy(entry);
+            if let Some((name, value)) = entry.split_once('=') {
+                out.push(EnvVarInfo {
+                    name: ReprCString::from(name),
+                    value: ReprCString::from(value),
+                    address: Address::NULL,
+                    arch: self.info.proc_arch,
+                });
+            }
+        }
+
+        Ok(out)
+    }
 }
 
 cglue_impl_group!(LinuxProcess, ProcessInstance, {});
@@ -275,6 +297,42 @@ impl Process for LinuxProcess {
                     .feed_into(out);
             }
         }
+    }
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_callback(
+        &mut self,
+        target_arch: Option<&ArchitectureIdent>,
+        mut callback: EnvVarCallback,
+    ) -> Result<()> {
+        if let Some(arch) = target_arch {
+            if *arch != self.info.proc_arch {
+                return Ok(());
+            }
+        }
+
+        for envar in self.collect_envars()? {
+            if !callback.call(envar) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn environment_block_address(&mut self, _architecture: ArchitectureIdent) -> Result<Address> {
+        // Linux does not expose a stable public env-block pointer through procfs.
+        Ok(Address::NULL)
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_from_address(
+        &mut self,
+        _env_block: Address,
+        architecture: ArchitectureIdent,
+        callback: EnvVarCallback,
+    ) -> Result<()> {
+        self.envar_list_callback(Some(&architecture), callback)
     }
 }
 

@@ -44,6 +44,92 @@ impl WindowsProcess {
             cached_modules: vec![],
         })
     }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn collect_envars(&mut self) -> Result<Vec<EnvVarInfo>> {
+        // Step 1: get PEB base via NtQueryInformationProcess
+        let mut pbi = PROCESS_BASIC_INFORMATION::default();
+        let status = unsafe {
+            NtQueryInformationProcess(
+                **self.virt_mem.handle,
+                ProcessBasicInformation,
+                &mut pbi as *mut _ as _,
+                size_of_val(&pbi) as _,
+                ptr::null_mut(),
+            )
+        };
+        if status.is_err() {
+            return Err(conv_ntstatus(status));
+        }
+
+        // Step 2: detect WOW64 (32-bit process on 64-bit OS)
+        let mut wow64_peb = 0usize;
+        let wow64_status = unsafe {
+            NtQueryInformationProcess(
+                **self.virt_mem.handle,
+                ProcessWow64Information,
+                &mut wow64_peb as *mut _ as _,
+                size_of_val(&wow64_peb) as _,
+                ptr::null_mut(),
+            )
+        };
+        let is_32bit =
+            wow64_status.is_ok() && wow64_status != STATUS_INVALID_INFO_CLASS && wow64_peb != 0;
+
+        // Step 3: read ProcessParameters pointer from PEB
+        // PEB64 ProcessParameters at +0x20, PEB32 at +0x10
+        let proc_params = if is_32bit {
+            let peb32 = Address::from(wow64_peb as umem);
+            self.read_addr32(peb32 + 0x10usize).data_part()?
+        } else {
+            let peb64 = Address::from(pbi.PebBaseAddress as umem);
+            self.read_addr64(peb64 + 0x20usize).data_part()?
+        };
+
+        // Step 4: read Environment pointer from ProcessParameters
+        // RTL_USER_PROCESS_PARAMETERS64 Environment at +0x80, 32-bit at +0x48
+        let env_addr = if is_32bit {
+            self.read_addr32(proc_params + 0x48usize).data_part()?
+        } else {
+            self.read_addr64(proc_params + 0x80usize).data_part()?
+        };
+
+        // Step 5: read the UTF-16LE environment block (NUL-NUL terminated, cap at 256 KB)
+        let mut buf = vec![0u8; 256 * 1024];
+        let _ = self.read_raw_into(env_addr, &mut buf);
+
+        // Step 6: parse UTF-16LE "KEY=VALUE\0" entries
+        let words: Vec<u16> = buf
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < words.len() {
+            if words[i] == 0 {
+                break;
+            }
+            let start = i;
+            while i < words.len() && words[i] != 0 {
+                i += 1;
+            }
+            let entry = String::from_utf16_lossy(&words[start..i]);
+            if let Some((name, value)) = entry.split_once('=') {
+                if !name.is_empty() {
+                    out.push(EnvVarInfo {
+                        name: ReprCString::from(name),
+                        value: ReprCString::from(value),
+                        address: env_addr + (start * 2) as umem,
+                        arch: self.info.proc_arch,
+                    });
+                }
+            }
+            i += 1;
+        }
+
+        Ok(out)
+    }
 }
 
 cglue_impl_group!(WindowsProcess, ProcessInstance, {});
@@ -273,6 +359,52 @@ impl Process for WindowsProcess {
         callback: SectionCallback,
     ) -> Result<()> {
         memflow::os::util::module_section_list_callback(&mut self.virt_mem, info, callback)
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_callback(
+        &mut self,
+        target_arch: Option<&ArchitectureIdent>,
+        mut callback: EnvVarCallback,
+    ) -> Result<()> {
+        if let Some(target_arch) = target_arch {
+            if *target_arch != self.info.proc_arch {
+                return Ok(());
+            }
+        }
+
+        for ev in self.collect_envars()? {
+            if !callback.call(ev) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn environment_block_address(&mut self, _architecture: ArchitectureIdent) -> Result<Address> {
+        Err(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported))
+    }
+
+    #[cfg(memflow_plugin_api = "2")]
+    fn envar_list_from_address(
+        &mut self,
+        _env_block: Address,
+        architecture: ArchitectureIdent,
+        mut callback: EnvVarCallback,
+    ) -> Result<()> {
+        if architecture != self.info.proc_arch {
+            return Ok(());
+        }
+
+        for ev in self.collect_envars()? {
+            if !callback.call(ev) {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Retrieves the process info

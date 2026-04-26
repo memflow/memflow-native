@@ -32,6 +32,8 @@ pub use process::MacProcess;
 pub(super) struct ProcArgs {
     pub exec_path: String,
     pub argv: Vec<String>,
+    #[cfg(memflow_plugin_api = "2")]
+    pub environ: Vec<(String, String)>,
 }
 
 fn argmax() -> usize {
@@ -58,6 +60,8 @@ fn argmax() -> usize {
 }
 
 pub(super) fn read_procargs2(pid: Pid) -> Result<Vec<u8>> {
+    // Read raw `KERN_PROCARGS2` for the target pid.
+    // This is shared by process-info building and env/argv enumeration to keep parsing consistent.
     let mut scratch = vec![0u8; argmax()];
 
     let mut mib: [c_int; 3] = [CTL_KERN, KERN_PROCARGS2, pid as _];
@@ -80,6 +84,34 @@ pub(super) fn read_procargs2(pid: Pid) -> Result<Vec<u8>> {
 
     scratch.truncate(len);
     Ok(scratch)
+}
+
+#[cfg(memflow_plugin_api = "2")]
+fn parse_environ(buf: &[u8]) -> Vec<(String, String)> {
+    let mut environ = Vec::new();
+    let mut idx = 0;
+
+    while idx < buf.len() {
+        let start = idx;
+        while idx < buf.len() && buf[idx] != 0 {
+            idx += 1;
+        }
+
+        if idx == start {
+            break;
+        }
+
+        let entry = String::from_utf8_lossy(&buf[start..idx]);
+        if let Some((name, value)) = entry.split_once('=') {
+            environ.push((name.to_string(), value.to_string()));
+        }
+
+        if idx < buf.len() {
+            idx += 1;
+        }
+    }
+
+    environ
 }
 
 pub(super) fn parse_procargs2(data: &[u8]) -> Result<ProcArgs> {
@@ -111,22 +143,24 @@ pub(super) fn parse_procargs2(data: &[u8]) -> Result<ProcArgs> {
         if idx >= buf.len() {
             break;
         }
-
         let start = idx;
         while idx < buf.len() && buf[idx] != 0 {
             idx += 1;
         }
-
         if idx > start {
             argv.push(String::from_utf8_lossy(&buf[start..idx]).into_owned());
         }
-
         if idx < buf.len() {
             idx += 1;
         }
     }
 
-    Ok(ProcArgs { exec_path, argv })
+    Ok(ProcArgs {
+        exec_path,
+        argv,
+        #[cfg(memflow_plugin_api = "2")]
+        environ: parse_environ(&buf[idx..]),
+    })
 }
 
 fn get_arch() -> ArchitectureIdent {
@@ -206,6 +240,8 @@ impl Os for MacOs {
     }
 
     fn process_info_by_pid(&mut self, pid: Pid) -> Result<ProcessInfo> {
+        // We query BSD info with the target `pid`.
+        // Using the caller pid here breaks name-based filtering.
         let bsd_info =
             lp::proc_pid::pidinfo::<lp::bsd_info::BSDInfo>(pid as _, 0).map_err(|e| {
                 error!("bsd_info: {e}");
@@ -223,6 +259,7 @@ impl Os for MacOs {
                 .collect::<Vec<u8>>();
             let fallback_path = String::from_utf8_lossy(&fallback_path).into_owned();
 
+            // Prefer parsed procargs for executable path + argv, but always keep a safe fallback.
             match read_procargs2(pid).and_then(|d| parse_procargs2(&d)) {
                 Ok(parsed) => {
                     let path = if parsed.exec_path.is_empty() {
@@ -279,7 +316,7 @@ impl Os for MacOs {
     ///
     /// # Arguments
     /// * `callback` - where to pass each matching module to. This is an opaque callback.
-    fn module_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
+    fn module_address_list_callback(&mut self, _callback: AddressCallback) -> Result<()> {
         // TODO: build this with OSKextCopyLoadedKextInfo.
         /*self.cached_modules = procfs::modules()
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadDir))?
@@ -298,7 +335,7 @@ impl Os for MacOs {
     ///
     /// # Arguments
     /// * `address` - address where module's information resides in
-    fn module_by_address(&mut self, address: Address) -> Result<ModuleInfo> {
+    fn module_by_address(&mut self, _address: Address) -> Result<ModuleInfo> {
         /*self.cached_modules
         .get(address.to_umem() as usize)
         .map(|km| ModuleInfo {
