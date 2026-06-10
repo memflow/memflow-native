@@ -115,17 +115,32 @@ impl LinuxProcess {
         let data = std::fs::read(path)
             .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::EnvarNotFound))?;
 
+        // /proc/<pid>/environ is exactly the memory range env_start..env_end,
+        // so in-process addresses can be derived from byte offsets within it.
+        let env_start = self
+            .proc_handle()
+            .ok()
+            .and_then(|p| p.stat().ok())
+            .and_then(|stat| stat.env_start);
+
         let mut out = Vec::new();
-        for entry in data.split(|b| *b == 0).filter(|entry| !entry.is_empty()) {
-            let entry = String::from_utf8_lossy(entry);
-            if let Some((name, value)) = entry.split_once('=') {
-                out.push(EnvVarInfo {
-                    name: ReprCString::from(name),
-                    value: ReprCString::from(value),
-                    address: Address::NULL,
-                    arch: self.info.proc_arch,
-                });
+        let mut offset = 0u64;
+        for entry in data.split(|b| *b == 0) {
+            let entry_len = entry.len() as u64;
+            if !entry.is_empty() {
+                let entry = String::from_utf8_lossy(entry);
+                if let Some((name, value)) = entry.split_once('=') {
+                    out.push(EnvVarInfo {
+                        name: ReprCString::from(name),
+                        value: ReprCString::from(value),
+                        address: env_start
+                            .map(|start| Address::from(start + offset))
+                            .unwrap_or(Address::NULL),
+                        arch: self.info.proc_arch,
+                    });
+                }
             }
+            offset += entry_len + 1;
         }
 
         Ok(out)
@@ -152,11 +167,10 @@ impl Process for LinuxProcess {
 
         module_maps
             .iter()
-            .enumerate()
             .filter(|_| target_arch.is_none() || Some(&self.info().sys_arch) == target_arch)
-            .take_while(|(i, _)| {
+            .take_while(|map| {
                 callback.call(ModuleAddressInfo {
-                    address: Address::from(*i as u64),
+                    address: Address::from(map.address.0),
                     arch: self.info.proc_arch,
                 })
             })
@@ -182,7 +196,8 @@ impl Process for LinuxProcess {
         let module_maps = self.module_maps()?;
 
         module_maps
-            .get(address.to_umem() as usize)
+            .iter()
+            .find(|map| Address::from(map.address.0) == address)
             .map(|map| ModuleInfo {
                 address,
                 parent_process: self.info.address,
@@ -223,8 +238,23 @@ impl Process for LinuxProcess {
     ///
     /// This will generally be for the initial executable that was run
     fn primary_module_address(&mut self) -> Result<Address> {
-        // TODO: Is it always 0th mod?
-        Ok(Address::from(0))
+        let exe = self.proc_handle()?.exe().ok();
+        let module_maps = self.module_maps()?;
+
+        if let Some(exe) = exe {
+            if let Some(map) = module_maps
+                .iter()
+                .find(|m| matches!(&m.pathname, MMapPath::Path(p) if *p == exe))
+            {
+                return Ok(Address::from(map.address.0));
+            }
+        }
+
+        // exe link unreadable or unmatched (e.g. deleted binary) - fall back to first mapping
+        module_maps
+            .first()
+            .map(|m| Address::from(m.address.0))
+            .ok_or(Error(ErrorOrigin::OsLayer, ErrorKind::NotFound))
     }
 
     /// Retrieves the process info
@@ -234,7 +264,16 @@ impl Process for LinuxProcess {
 
     /// Retrieves the state of the process
     fn state(&mut self) -> ProcessState {
-        ProcessState::Unknown
+        match procfs::process::Process::new(self.pid).and_then(|p| p.stat()) {
+            Ok(stat) => match stat.state {
+                // Z = zombie (exited, unreaped), X/x = dead
+                'Z' | 'X' | 'x' => ProcessState::Dead(stat.exit_code.unwrap_or(0)),
+                _ => ProcessState::Alive,
+            },
+            // /proc/<pid> vanished -> the process was reaped; exit code is no longer recoverable
+            Err(procfs::ProcError::NotFound(_)) => ProcessState::Dead(0),
+            Err(_) => ProcessState::Unknown,
+        }
     }
 
     /// Changes the dtb this process uses for memory translations.
@@ -321,8 +360,13 @@ impl Process for LinuxProcess {
 
     #[cfg(memflow_plugin_api = "2")]
     fn environment_block_address(&mut self, _architecture: ArchitectureIdent) -> Result<Address> {
-        // Linux does not expose a stable public env-block pointer through procfs.
-        Ok(Address::NULL)
+        // env_start is only exposed on kernel >= 3.5 and may be hidden by permission checks.
+        self.proc_handle()?
+            .stat()
+            .map_err(|_| Error(ErrorOrigin::OsLayer, ErrorKind::UnableToReadFile))?
+            .env_start
+            .map(Address::from)
+            .ok_or(Error(ErrorOrigin::OsLayer, ErrorKind::NotSupported))
     }
 
     #[cfg(memflow_plugin_api = "2")]
