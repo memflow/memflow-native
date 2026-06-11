@@ -147,6 +147,41 @@ impl LinuxProcess {
     }
 }
 
+/// Decodes a waitpid(2)-style status word (as exposed in `/proc/<pid>/stat` field 52)
+/// into a memflow [`ExitCode`].
+///
+/// A normal exit reports its `exit(3)` code; a process killed by a signal reports the
+/// negated signal number so the two cases stay distinguishable.
+fn decode_exit_code(status: i32) -> i32 {
+    if status & 0x7f == 0 {
+        // WIFEXITED: low 7 bits clear -> exit code is in bits 8..16.
+        (status >> 8) & 0xff
+    } else {
+        // WIFSIGNALED: low 7 bits carry the terminating signal.
+        -(status & 0x7f)
+    }
+}
+
+/// Resolves the [`ProcessState`] of `pid` from `/proc/<pid>/stat`.
+///
+/// Zombie/dead states map to [`ProcessState::Dead`] (carrying the decoded exit code
+/// when the kernel exposes it); a vanished PID is treated as reaped (`Dead(0)`), and a
+/// stat that fails for any other reason (e.g. permissions) stays [`ProcessState::Unknown`].
+pub(crate) fn process_state(pid: pid_t) -> ProcessState {
+    match procfs::process::Process::new(pid).and_then(|p| p.stat()) {
+        Ok(stat) => match stat.state {
+            // Z = zombie (exited, unreaped), X/x = dead
+            'Z' | 'X' | 'x' => {
+                ProcessState::Dead(stat.exit_code.map(decode_exit_code).unwrap_or(0))
+            }
+            _ => ProcessState::Alive,
+        },
+        // /proc/<pid> vanished -> the process was reaped; exit code is no longer recoverable
+        Err(procfs::ProcError::NotFound(_)) => ProcessState::Dead(0),
+        Err(_) => ProcessState::Unknown,
+    }
+}
+
 cglue_impl_group!(LinuxProcess, ProcessInstance, {});
 cglue_impl_group!(LinuxProcess, IntoProcessInstance, {});
 
@@ -171,7 +206,9 @@ impl Process for LinuxProcess {
             .take_while(|map| {
                 callback.call(ModuleAddressInfo {
                     address: Address::from(map.address.0),
-                    arch: self.info.proc_arch,
+                    // Match `module_by_address`, which keys on `sys_arch`; the maps are
+                    // also filtered above by `sys_arch`.
+                    arch: self.info.sys_arch,
                 })
             })
             .for_each(|_| {});
@@ -264,16 +301,7 @@ impl Process for LinuxProcess {
 
     /// Retrieves the state of the process
     fn state(&mut self) -> ProcessState {
-        match procfs::process::Process::new(self.pid).and_then(|p| p.stat()) {
-            Ok(stat) => match stat.state {
-                // Z = zombie (exited, unreaped), X/x = dead
-                'Z' | 'X' | 'x' => ProcessState::Dead(stat.exit_code.unwrap_or(0)),
-                _ => ProcessState::Alive,
-            },
-            // /proc/<pid> vanished -> the process was reaped; exit code is no longer recoverable
-            Err(procfs::ProcError::NotFound(_)) => ProcessState::Dead(0),
-            Err(_) => ProcessState::Unknown,
-        }
+        process_state(self.pid)
     }
 
     /// Changes the dtb this process uses for memory translations.
@@ -391,5 +419,27 @@ impl MemoryView for LinuxProcess {
 
     fn metadata(&self) -> MemoryViewMetadata {
         self.virt_mem.metadata()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_exit_code;
+
+    #[test]
+    fn normal_exit_decodes_to_exit_code() {
+        // exit(0) and exit(3) as reported by waitpid: code in bits 8..16.
+        assert_eq!(decode_exit_code(0x0000), 0);
+        assert_eq!(decode_exit_code(3 << 8), 3);
+        assert_eq!(decode_exit_code(255 << 8), 255);
+    }
+
+    #[test]
+    fn signalled_exit_decodes_to_negative_signal() {
+        // Killed by SIGKILL (9) / SIGSEGV (11): low 7 bits carry the signal.
+        assert_eq!(decode_exit_code(9), -9);
+        assert_eq!(decode_exit_code(11), -11);
+        // Core-dump flag (0x80) must not bleed into the signal number.
+        assert_eq!(decode_exit_code(11 | 0x80), -11);
     }
 }
