@@ -4,7 +4,7 @@ use memflow::prelude::v1::*;
 
 use std::sync::{Arc, Mutex};
 
-use evdev::{Device, EventType, KeyCode};
+use evdev::{Device, EventType, InputEvent, KeyCode, SynchronizationCode};
 
 use super::keymap::vk_to_keycodes;
 
@@ -12,12 +12,15 @@ use super::keymap::vk_to_keycodes;
 const KEY_STATE_BITS: usize = 0x300;
 const KEY_STATE_WORDS: usize = KEY_STATE_BITS / 64;
 
-/// Keyboard state reader backed by evdev (`/dev/input/event*`).
+/// Keyboard state reader and injector backed by evdev (`/dev/input/event*`).
 ///
 /// Key state is polled via the `EVIOCGKEY` ioctl (the analog of Windows'
 /// `GetKeyboardState`), which reads the currently-pressed key bitmap without consuming
-/// input events. Requires read access to the device nodes, i.e. root or membership in
-/// the `input` group.
+/// input events. Key presses are injected by writing `EV_KEY` events to a device node,
+/// which the kernel propagates to every reader as if the key had been typed. Reading
+/// requires read access to the device nodes and injection requires write access; the
+/// nodes default to `root:input` 0660, so root or membership in the `input` group
+/// grants both.
 ///
 /// Devices are enumerated once on construction. Devices that disappear (unplug) are
 /// dropped on the fly, and a full re-enumeration is attempted whenever none of the
@@ -115,8 +118,48 @@ impl Keyboard for LinuxKeyboard {
         self.state().map(|s| s.is_down(vk)).unwrap_or(false)
     }
 
-    fn set_down(&mut self, _vk: i32, _down: bool) {
-        // TODO: input injection would require uinput; matches the Windows stub.
+    /// Presses or releases the given key by injecting an `EV_KEY` event into the first
+    /// device that supports it (the kernel drops injected events a device does not
+    /// advertise). Side-agnostic virtual-key codes press their left-side variant.
+    /// Invalid or unmapped keycodes are ignored cleanly; injection failures are logged,
+    /// as this interface has no error channel.
+    fn set_down(&mut self, vk: i32, down: bool) {
+        let Some(&code) = vk_to_keycodes(vk).first() else {
+            return;
+        };
+
+        let events = [
+            InputEvent::new(EventType::KEY.0, code, i32::from(down)),
+            InputEvent::new(
+                EventType::SYNCHRONIZATION.0,
+                SynchronizationCode::SYN_REPORT.0,
+                0,
+            ),
+        ];
+
+        let mut devices = self.devices.lock().unwrap_or_else(|e| e.into_inner());
+
+        let injected = devices
+            .iter_mut()
+            .filter(|device| {
+                device
+                    .supported_keys()
+                    .map(|keys| keys.contains(KeyCode(code)))
+                    .unwrap_or(false)
+            })
+            .any(|device| match device.send_events(&events) {
+                Ok(()) => true,
+                Err(err) => {
+                    log::debug!("key injection failed on a device: {err}");
+                    false
+                }
+            });
+
+        if !injected {
+            log::warn!(
+                "unable to inject key event for vk {vk:#x} (requires write access to /dev/input and a device supporting the key)"
+            );
+        }
     }
 
     /// Reads the entire keyboard state.
