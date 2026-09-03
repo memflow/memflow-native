@@ -11,6 +11,10 @@ use itertools::Itertools;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+pub mod keyboard;
+mod keymap;
+pub use keyboard::{LinuxKeyboard, LinuxKeyboardState};
+
 pub mod mem;
 use mem::ProcessVirtualMemory;
 
@@ -274,5 +278,18 @@ impl Os for LinuxOs {
     /// Retrieves the OS info
     fn info(&self) -> &OsInfo {
         &self.info
+    }
+}
+
+impl OsKeyboard for LinuxOs {
+    type KeyboardType<'a> = LinuxKeyboard;
+    type IntoKeyboardType = LinuxKeyboard;
+
+    fn keyboard(&mut self) -> Result<Self::KeyboardType<'_>> {
+        LinuxKeyboard::new()
+    }
+
+    fn into_keyboard(self) -> Result<Self::IntoKeyboardType> {
+        LinuxKeyboard::new()
     }
 }

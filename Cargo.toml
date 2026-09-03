@@ -30,6 +30,7 @@ memflow = { version = "0.2", features = ["plugins"] }
 # tracking issue: https://github.com/eminence/procfs/pull/309
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "=0.15.1", features = ["backtrace"] }
+evdev = "0.13"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61", features = [
