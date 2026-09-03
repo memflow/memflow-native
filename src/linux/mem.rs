@@ -181,11 +181,18 @@ impl ProcessVirtualMemory {
                             let mut remaining_written =
                                 if libcret == -1 { 0 } else { libcret as usize };
 
-                            for (liof, (_, meta)) in iov_local
-                                .iter()
-                                .take(cnt)
-                                .zip(iov_remote.iter().zip(self.temp_meta.iter()))
-                            {
+                            // The syscall above operated on the window [win, win + cnt),
+                            // so result dispatch and byte accounting must start at `win`
+                            // too. `offset` is advanced inside the loop, so snapshot it
+                            // before iterating.
+                            let win = offset;
+
+                            for (liof, (_, meta)) in iov_local.iter().skip(win).take(cnt).zip(
+                                iov_remote
+                                    .iter()
+                                    .skip(win)
+                                    .zip(self.temp_meta.iter().skip(win)),
+                            ) {
                                 offset += 1;
                                 let to_write = remaining_written;
 
@@ -248,5 +255,89 @@ impl MemoryView for ProcessVirtualMemory {
             readonly: false,
             real_size: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memflow::cglue::CTup2;
+
+    fn vmem_for_pid(pid: pid_t) -> ProcessVirtualMemory {
+        const IOV_MAX: usize = 1024;
+        ProcessVirtualMemory {
+            pid,
+            temp_iov: vec![
+                IoSendVec(iovec {
+                    iov_base: std::ptr::null_mut::<c_void>(),
+                    iov_len: 0,
+                });
+                IOV_MAX * 2
+            ]
+            .into_boxed_slice(),
+            temp_meta: vec![Address::INVALID; IOV_MAX].into_boxed_slice(),
+        }
+    }
+
+    // Regression test for the partial-transfer retry window in `process_rw`.
+    //
+    // A batched read of [valid, unmapped, valid] forces `process_vm_readv` to transfer
+    // the first region, fault on the middle one, and require a retry for the third.
+    // Before the `.skip(win)` fix the retry dispatched from index 0, re-reporting the
+    // first region and silently dropping the third. Reading from our own PID lets us
+    // exercise this without spawning a child.
+    #[test]
+    fn partial_read_across_hole_reports_each_region_once() {
+        let src_a = [0xAAu8; 8];
+        let src_c = [0xCCu8; 8];
+
+        let addr_a = Address::from(src_a.as_ptr() as u64);
+        let addr_c = Address::from(src_c.as_ptr() as u64);
+        // Below the default mmap_min_addr, so reliably unmapped (EFAULT on read).
+        let addr_bad = Address::from(0x1000u64);
+
+        let mut dst_a = [0u8; 8];
+        let mut dst_b = [0u8; 8];
+        let mut dst_c = [0u8; 8];
+
+        let mut ok: Vec<(Address, Vec<u8>)> = Vec::new();
+        let mut fail: Vec<Address> = Vec::new();
+
+        {
+            let inp = vec![
+                CTup2(addr_a, (&mut dst_a[..]).into()),
+                CTup2(addr_bad, (&mut dst_b[..]).into()),
+                CTup2(addr_c, (&mut dst_c[..]).into()),
+            ];
+
+            let mut ok_cb = |CTup2(a, d): ReadData| {
+                ok.push((a, d.to_vec()));
+                true
+            };
+            let mut fail_cb = |CTup2(a, _): ReadData| {
+                fail.push(a);
+                true
+            };
+            let mut ok_oc: ReadCallback = (&mut ok_cb).into();
+            let mut fail_oc: ReadCallback = (&mut fail_cb).into();
+
+            let mut mem = vmem_for_pid(unsafe { libc::getpid() });
+            mem.read_iter(inp.into_iter(), Some(&mut ok_oc), Some(&mut fail_oc))
+                .unwrap();
+        }
+
+        ok.sort_by_key(|(a, _)| a.to_umem());
+        let mut expected = vec![(addr_a, vec![0xAAu8; 8]), (addr_c, vec![0xCCu8; 8])];
+        expected.sort_by_key(|(a, _)| a.to_umem());
+
+        assert_eq!(
+            ok, expected,
+            "each readable region must be reported exactly once with correct data"
+        );
+        assert_eq!(
+            fail,
+            vec![addr_bad],
+            "the unmapped region must be the only failure"
+        );
     }
 }

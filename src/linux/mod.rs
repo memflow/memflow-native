@@ -8,11 +8,60 @@ use procfs::KernelModule;
 
 use itertools::Itertools;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 pub mod mem;
 use mem::ProcessVirtualMemory;
 
 pub mod process;
+use process::process_state;
 pub use process::LinuxProcess;
+
+/// Architecture of the host the backend is running on.
+///
+/// memflow-native works through native syscalls, so the inspected processes always run
+/// under the same kernel/ISA as this build. We therefore report the compile target's
+/// architecture rather than assuming x86-64. 32-bit processes running under a 64-bit
+/// kernel are still reported as 64-bit here; distinguishing them would require sniffing
+/// the ELF class of `/proc/<pid>/exe`.
+fn host_arch() -> ArchitectureIdent {
+    #[cfg(target_arch = "x86_64")]
+    {
+        ArchitectureIdent::X86(64, false)
+    }
+    #[cfg(target_arch = "x86")]
+    {
+        ArchitectureIdent::X86(32, false)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Page size is read at runtime; only 4k is currently supported by memflow.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        ArchitectureIdent::AArch64(if page_size > 0 {
+            page_size as usize
+        } else {
+            0x1000
+        })
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64")))]
+    {
+        ArchitectureIdent::Unknown(0)
+    }
+}
+
+/// Stable, ordering-independent handle for a kernel module, derived from its name.
+/// `procfs::KernelModule` exposes no kernel address we could reuse, so hashing the name
+/// keeps the handle valid across module load/unload churn (unlike a list index).
+///
+/// `DefaultHasher` is fixed-seeded (unlike the randomized `RandomState` behind
+/// `HashMap`), so the handle is consistent across the two lookups within a process run,
+/// which is all this handle needs.
+fn module_handle(name: &str) -> Address {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    Address::from(hasher.finish())
+}
 
 pub struct LinuxOs {
     info: OsInfo,
@@ -46,7 +95,7 @@ impl Default for LinuxOs {
         let info = OsInfo {
             base: Address::NULL,
             size: 0,
-            arch: ArchitectureIdent::X86(64, false),
+            arch: host_arch(),
         };
 
         Self { info }
@@ -108,15 +157,17 @@ impl Os for LinuxOs {
 
         let path = path.into();
 
+        let arch = host_arch();
+
         Ok(ProcessInfo {
             address: (proc.pid() as umem).into(),
             pid,
             command_line,
             path,
             name,
-            sys_arch: ArchitectureIdent::X86(64, false),
-            proc_arch: ArchitectureIdent::X86(64, false),
-            state: ProcessState::Alive,
+            sys_arch: arch,
+            proc_arch: arch,
+            state: process_state(pid as pid_t),
             // dtb is not known/used here
             dtb1: Address::invalid(),
             dtb2: Address::invalid(),
@@ -145,8 +196,9 @@ impl Os for LinuxOs {
     fn module_address_list_callback(&mut self, mut callback: AddressCallback) -> Result<()> {
         let modules = self.kernel_modules_sorted()?;
 
-        (0..modules.len())
-            .map(Address::from)
+        modules
+            .iter()
+            .map(|km| module_handle(&km.name))
             .take_while(|a| callback.call(*a))
             .for_each(|_| {});
 
@@ -161,7 +213,8 @@ impl Os for LinuxOs {
         let modules = self.kernel_modules_sorted()?;
 
         modules
-            .get(address.to_umem() as usize)
+            .iter()
+            .find(|km| module_handle(&km.name) == address)
             .map(|km| ModuleInfo {
                 address,
                 size: km.size as umem,
